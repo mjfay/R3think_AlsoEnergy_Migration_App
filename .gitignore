@@ -1,0 +1,26 @@
+# Python
+backend/.venv/
+backend/__pycache__/
+backend/dist/
+backend/build/
+backend/*.egg-info/
+**/__pycache__/
+*.pyc
+*.pyo
+
+# Node
+frontend/node_modules/
+
+# Rust / Tauri build artifacts
+frontend/src-tauri/target/
+
+# Database (user data stays local)
+*.db
+*.sqlite
+
+# Deliverables (large binaries — share via SharePoint, not git)
+deliverables/
+
+# macOS
+.DS_Store
+**/.DS_Store

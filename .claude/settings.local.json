@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -m venv .venv)",
+      "Bash(.venv/bin/pip install *)",
+      "WebSearch",
+      "WebFetch(domain:api.alsoenergy.com)",
+      "WebFetch(domain:kb.alsoenergy.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(.venv/bin/python -c \"from app.main import app; from app.db import init_db; init_db\\(\\); print\\('OK'\\)\")",
+      "Bash(npm create *)",
+      "Bash(npm install *)",
+      "Bash(npm run *)",
+      "Bash(.venv/bin/python -c \"from app.sync import sync_all; from app.main import app; print\\('All imports OK'\\)\")",
+      "Bash(.venv/bin/python -)",
+      "Bash(.venv/bin/python -c ' *)",
+      "Bash(rustc --version)",
+      "Bash(cargo --version)",
+      "Bash(curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs)",
+      "Bash(sh -s -- -y --no-modify-path)"
+    ]
+  }
+}
