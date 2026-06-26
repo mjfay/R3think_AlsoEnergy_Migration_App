@@ -12,7 +12,6 @@ import { Onboarding } from './pages/Onboarding'
 import { MigrationsList } from './pages/MigrationsList'
 import { NewMigrationJob } from './pages/NewMigrationJob'
 import { MigrationJobDetail } from './pages/MigrationJobDetail'
-import { Discovery } from './pages/Discovery'
 import { Settings } from './pages/Settings'
 import { api } from './lib/api'
 import './index.css'
@@ -31,7 +30,6 @@ function MainApp() {
           <NavLink to="/" end className={navCls}>Dashboard</NavLink>
           <NavLink to="/sites" className={navCls}>Sites</NavLink>
           <NavLink to="/migrations" className={navCls}>Extractions</NavLink>
-          <NavLink to="/discovery" className={navCls}>Find TCP</NavLink>
           <div className="ml-auto">
             <NavLink
               to="/settings"
@@ -56,7 +54,6 @@ function MainApp() {
         <Route path="/migrations" element={<MigrationsList />} />
         <Route path="/migrations/new" element={<NewMigrationJob />} />
         <Route path="/migrations/:jobId" element={<MigrationJobDetail />} />
-        <Route path="/discovery" element={<Discovery />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/onboarding" element={<Onboarding />} />
       </Routes>
