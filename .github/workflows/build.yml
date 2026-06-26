@@ -1,0 +1,181 @@
+name: Build Installers
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend deps
+        working-directory: frontend
+        run: npm ci
+
+      - name: Install Python deps + PyInstaller
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install pyinstaller
+
+      - name: Build backend binary (macOS)
+        working-directory: backend
+        run: pyinstaller alsoenergy_backend.spec --noconfirm
+
+      - name: Build Tauri app (macOS)
+        working-directory: frontend
+        run: npm run tauri build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ""
+
+      - name: Upload macOS DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: r3think-extraction-tool-macos
+          path: frontend/src-tauri/target/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend deps
+        working-directory: frontend
+        run: npm ci
+
+      - name: Install Python deps + PyInstaller
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install pyinstaller
+
+      - name: Build backend binary (Windows)
+        working-directory: backend
+        run: pyinstaller alsoenergy_backend.spec --noconfirm
+
+      # Tauri on Windows looks for alsoenergy-backend.exe in dist/
+      # PyInstaller on Windows produces alsoenergy-backend.exe already
+      - name: Verify backend binary exists
+        working-directory: backend
+        run: |
+          if (!(Test-Path "dist/alsoenergy-backend.exe")) {
+            Write-Error "Backend binary not found at dist/alsoenergy-backend.exe"
+            exit 1
+          }
+        shell: pwsh
+
+      # tauri.conf.json resources references "alsoenergy-backend" (no .exe).
+      # Copy the Windows exe to the no-extension name so Tauri can bundle it.
+      - name: Alias backend binary for Tauri bundler
+        working-directory: backend
+        run: Copy-Item "dist/alsoenergy-backend.exe" "dist/alsoenergy-backend"
+        shell: pwsh
+
+      - name: Build Tauri app (Windows)
+        working-directory: frontend
+        run: npm run tauri build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ""
+
+      - name: Upload Windows MSI
+        uses: actions/upload-artifact@v4
+        with:
+          name: r3think-extraction-tool-windows
+          path: frontend/src-tauri/target/release/bundle/msi/*.msi
+          if-no-files-found: error
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev \
+            libgtk-3-dev
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend deps
+        working-directory: frontend
+        run: npm ci
+
+      - name: Install Python deps + PyInstaller
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install pyinstaller
+
+      - name: Build backend binary (Linux)
+        working-directory: backend
+        run: pyinstaller alsoenergy_backend.spec --noconfirm
+
+      - name: Build Tauri app (Linux)
+        working-directory: frontend
+        run: npm run tauri build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ""
+
+      - name: Upload Linux AppImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: r3think-extraction-tool-linux
+          path: frontend/src-tauri/target/release/bundle/appimage/*.AppImage
+          if-no-files-found: error
