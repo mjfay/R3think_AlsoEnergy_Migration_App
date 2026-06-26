@@ -44,7 +44,7 @@ jobs:
 
       - name: Build Tauri app (macOS)
         working-directory: frontend
-        run: npm run tauri build
+        run: npx tauri build
         env:
           TAURI_SIGNING_PRIVATE_KEY: ""
 
@@ -90,8 +90,6 @@ jobs:
         working-directory: backend
         run: pyinstaller alsoenergy_backend.spec --noconfirm
 
-      # Tauri on Windows looks for alsoenergy-backend.exe in dist/
-      # PyInstaller on Windows produces alsoenergy-backend.exe already
       - name: Verify backend binary exists
         working-directory: backend
         run: |
@@ -101,8 +99,6 @@ jobs:
           }
         shell: pwsh
 
-      # tauri.conf.json resources references "alsoenergy-backend" (no .exe).
-      # Copy the Windows exe to the no-extension name so Tauri can bundle it.
       - name: Alias backend binary for Tauri bundler
         working-directory: backend
         run: Copy-Item "dist/alsoenergy-backend.exe" "dist/alsoenergy-backend"
@@ -110,7 +106,7 @@ jobs:
 
       - name: Build Tauri app (Windows)
         working-directory: frontend
-        run: npm run tauri build
+        run: npx tauri build
         env:
           TAURI_SIGNING_PRIVATE_KEY: ""
 
@@ -169,7 +165,7 @@ jobs:
 
       - name: Build Tauri app (Linux)
         working-directory: frontend
-        run: npm run tauri build
+        run: npx tauri build
         env:
           TAURI_SIGNING_PRIVATE_KEY: ""
 
