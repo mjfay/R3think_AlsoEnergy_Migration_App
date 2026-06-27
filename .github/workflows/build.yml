@@ -93,8 +93,8 @@ jobs:
       - name: Verify backend binary exists
         working-directory: backend
         run: |
-          if (!(Test-Path "dist/alsoenergy-backend.exe")) {
-            Write-Error "Backend binary not found at dist/alsoenergy-backend.exe"
+          if (!(Test-Path "dist/alsoenergy-backend/alsoenergy-backend.exe")) {
+            Write-Error "Backend binary not found at dist/alsoenergy-backend/alsoenergy-backend.exe"
             exit 1
           }
         shell: pwsh

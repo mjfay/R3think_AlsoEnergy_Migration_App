@@ -20,13 +20,13 @@ fn backend_binary_path(app: &tauri::AppHandle) -> std::path::PathBuf {
         .resource_dir()
         .expect("failed to get resource dir");
 
-    // On Windows PyInstaller produces a .exe; the CI bundles it with the .exe name.
+    // onedir bundle: the exe lives inside an alsoenergy-backend/ subfolder.
     #[cfg(target_os = "windows")]
     let bin_name = "alsoenergy-backend.exe";
     #[cfg(not(target_os = "windows"))]
     let bin_name = "alsoenergy-backend";
 
-    resource_dir.join(bin_name)
+    resource_dir.join("alsoenergy-backend").join(bin_name)
 }
 
 fn spawn_backend(port: u16, app: &tauri::AppHandle) -> Result<Child, String> {

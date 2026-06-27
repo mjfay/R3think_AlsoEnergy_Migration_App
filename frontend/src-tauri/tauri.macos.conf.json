@@ -1,7 +1,7 @@
 {
   "bundle": {
     "resources": {
-      "../../backend/dist/alsoenergy-backend": "alsoenergy-backend"
+      "../../backend/dist/alsoenergy-backend/": "alsoenergy-backend/"
     }
   }
 }
