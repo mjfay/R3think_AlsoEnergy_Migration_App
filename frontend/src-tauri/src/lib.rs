@@ -21,9 +21,8 @@ fn backend_binary_path(app: &tauri::AppHandle) -> std::path::PathBuf {
         .resource_dir()
         .expect("failed to get resource dir");
 
-    #[cfg(target_os = "windows")]
-    let bin_name = "alsoenergy-backend.exe";
-    #[cfg(not(target_os = "windows"))]
+    // The CI aliases alsoenergy-backend.exe -> alsoenergy-backend before bundling,
+    // so the resource is always named without .exe on all platforms.
     let bin_name = "alsoenergy-backend";
 
     resource_dir.join(bin_name)
