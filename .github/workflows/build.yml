@@ -90,8 +90,6 @@ jobs:
         working-directory: backend
         run: pyinstaller alsoenergy_backend.spec --noconfirm
 
-      # Tauri on Windows looks for alsoenergy-backend.exe in dist/
-      # PyInstaller on Windows produces alsoenergy-backend.exe already
       - name: Verify backend binary exists
         working-directory: backend
         run: |
@@ -99,13 +97,6 @@ jobs:
             Write-Error "Backend binary not found at dist/alsoenergy-backend.exe"
             exit 1
           }
-        shell: pwsh
-
-      # tauri.conf.json resources references "alsoenergy-backend" (no .exe).
-      # Copy the Windows exe to the no-extension name so Tauri can bundle it.
-      - name: Alias backend binary for Tauri bundler
-        working-directory: backend
-        run: Copy-Item "dist/alsoenergy-backend.exe" "dist/alsoenergy-backend"
         shell: pwsh
 
       - name: Build Tauri app (Windows)
