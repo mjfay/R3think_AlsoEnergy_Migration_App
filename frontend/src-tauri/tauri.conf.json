@@ -34,9 +34,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": {
-      "../../backend/dist/alsoenergy-backend": "alsoenergy-backend"
-    }
+    "resources": {}
   },
   "plugins": {
     "shell": {
