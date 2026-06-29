@@ -24,3 +24,4 @@ deliverables/
 # macOS
 .DS_Store
 **/.DS_Store
+backend/exports/
