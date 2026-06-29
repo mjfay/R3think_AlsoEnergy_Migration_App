@@ -124,24 +124,6 @@ export function Settings() {
         </Row>
       </Section>
 
-      {/* r3think Contact */}
-      <Section title="r3think Contact Emails">
-        <Row
-          label="Recipient addresses"
-          description="CSV exports are emailed to these addresses. Edit if they change."
-        >
-          <div className="text-xs text-zinc-400 text-right">
-            <div>robert@r3thinklabs.com</div>
-            <div>michael@r3thinklabs.com</div>
-          </div>
-        </Row>
-        <div className="px-5 py-3">
-          <p className="text-xs text-zinc-600">
-            Contact r3think labs to update these addresses. Customisable address fields coming in a future release.
-          </p>
-        </div>
-      </Section>
-
       {/* Data */}
       <Section title="Data">
         <Row
@@ -224,9 +206,6 @@ export function Settings() {
       <Section title="About">
         <Row label="App version">
           <span className="text-sm text-zinc-400">{TOOL_VERSION}</span>
-        </Row>
-        <Row label="Built by">
-          <span className="text-sm text-zinc-400">r3think labs</span>
         </Row>
       </Section>
     </div>
