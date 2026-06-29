@@ -8,14 +8,14 @@
 | A2: Production DMG installed & boots | ✅ Passed |
 | A3: build.yml reviewed + Windows alias fix | ✅ Patched |
 | A4: Git repo state | ⚠️ No repo yet — see step 1 |
-| A5: DMG copied to deliverables/ | ✅ `deliverables/v0.1.0/r3think-extraction-tool_0.1.0_aarch64.dmg` |
+| A5: DMG copied to deliverables/ | ✅ `deliverables/v0.1.0/asset-owner-export-tool_0.1.0_aarch64.dmg` |
 
 ---
 
 ## Step 1 — Create GitHub repo
 
 1. Go to github.com → New repository
-   - Name: `r3think-extraction-tool` (or whatever you want)
+   - Name: `asset-owner-export-tool` (or whatever you want)
    - Private ✅
    - No README, no .gitignore (we have our own)
 
@@ -35,7 +35,6 @@ git commit -m "feat: initial release v0.1.0
 - Tauri + FastAPI + React desktop app
 - AlsoEnergy site picker (1,298 sites, live search)
 - TCP device detection via driver.settings.TCPPort
-- r3think branding, Extraction rename
 - GitHub Actions CI for macOS/Windows/Linux"
 
 git remote add origin <YOUR_GITHUB_URL>
@@ -62,9 +61,9 @@ Three parallel jobs run: macOS DMG, Windows MSI, Linux AppImage.
 2. Click the "Build Installers" workflow run for the `v0.1.0` tag
 3. Wait for all 3 jobs to go green (~15–25 min)
 4. Download artifacts at the bottom of the run page:
-   - `r3think-extraction-tool-macos` → contains `.dmg`
-   - `r3think-extraction-tool-windows` → contains `.msi`
-   - `r3think-extraction-tool-linux` → contains `.AppImage`
+   - `asset-owner-export-tool-macos` → contains `.dmg`
+   - `asset-owner-export-tool-windows` → contains `.msi`
+   - `asset-owner-export-tool-linux` → contains `.AppImage`
 
 ---
 
@@ -74,7 +73,7 @@ Upload the three installer files to the agreed SharePoint folder so your boss ca
 
 The macOS DMG from the local build is already in:
 ```
-deliverables/v0.1.0/r3think-extraction-tool_0.1.0_aarch64.dmg
+deliverables/v0.1.0/asset-owner-export-tool_0.1.0_aarch64.dmg
 ```
 (This folder is in .gitignore — not pushed to GitHub.)
 
@@ -83,14 +82,14 @@ deliverables/v0.1.0/r3think-extraction-tool_0.1.0_aarch64.dmg
 ## Step 6 — Notify your boss (Slack template)
 
 ```
-Hey — the r3think Extraction Tool v0.1.0 is ready.
+Hey — the Asset Owner Export Tool v0.1.0 is ready.
 
 Uploaded to SharePoint: [link]
 
 Files:
-• macOS: r3think-extraction-tool_0.1.0_aarch64.dmg  (Apple Silicon)
-• Windows: r3think-extraction-tool_0.1.0_x64_en-US.msi
-• Linux: r3think-extraction-tool_0.1.0_amd64.AppImage
+• macOS: asset-owner-export-tool_0.1.0_aarch64.dmg  (Apple Silicon)
+• Windows: asset-owner-export-tool_0.1.0_x64_en-US.msi
+• Linux: asset-owner-export-tool_0.1.0_amd64.AppImage
 
 Install notes:
 - macOS: open the DMG, drag to Applications. On first launch, macOS will ask for keychain access — click Allow.
@@ -108,4 +107,4 @@ Let me know if you hit any issues.
 - **macOS first-launch keychain prompt**: expected — click "Allow". Only happens once per install.
 - **Re-authentication on each launch**: by design (OAuth tokens live in memory only).
 - **TCP devices**: the app now correctly detects Modbus TCP devices via `driver.settings.TCPPort`. Run a full sync to populate IP addresses for ~97 previously-missed TCP devices.
-- **"Extraction" vs "Migration"**: UI says "Extraction" everywhere. Internal DB tables/API routes still say "migration" for compatibility — this is intentional.
+- **"Export" vs "Migration"**: UI says "Export" everywhere. Internal DB tables/API routes still say "migration" for compatibility — this is intentional.

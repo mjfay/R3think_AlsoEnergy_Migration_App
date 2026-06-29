@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "r3think Extraction Tool",
+  "productName": "Asset Owner Export Tool",
   "version": "0.1.0",
-  "identifier": "com.r3thinklabs.migration-tool",
+  "identifier": "com.assetowner.export-tool",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
@@ -11,7 +11,7 @@
   "app": {
     "windows": [
       {
-        "title": "r3think Extraction Tool",
+        "title": "Asset Owner Export Tool",
         "width": 1280,
         "height": 800,
         "minWidth": 900,
