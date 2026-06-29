@@ -51,14 +51,14 @@ export function Dashboard() {
         <div className="flex items-center justify-between rounded-lg border border-emerald-700 bg-emerald-900/10 px-4 py-3">
           <p className="text-sm text-emerald-300">
             {readyJobs.length === 1
-              ? 'You have 1 extraction ready to download.'
-              : `You have ${readyJobs.length} extractions ready to download.`}
+              ? 'You have 1 export ready to download.'
+              : `You have ${readyJobs.length} exports ready to download.`}
           </p>
           <Link
             to="/migrations"
             className="text-xs px-3 py-1.5 border border-emerald-700 text-emerald-400 hover:text-emerald-200 hover:border-emerald-500 rounded-lg transition-colors whitespace-nowrap ml-4"
           >
-            Go to Extractions →
+            Go to Exports →
           </Link>
         </div>
       )}
