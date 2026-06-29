@@ -1,6 +1,7 @@
 """
-N3uron historical tag validator for solar site monitoring.
-Pulls W, TOTWHEXP, TOTWHIMP for each site and saves interactive HTML charts.
+N3uron historical tag validator — Altus Power solar sites.
+Pulls W, TOTWHEXP, TOTWHIMP from MTR_001 for each site and saves
+an interactive Plotly HTML chart per site.
 """
 
 import os
@@ -10,8 +11,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import requests
+import pandas as pd
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -23,36 +24,49 @@ log = logging.getLogger(__name__)
 # Config
 # ---------------------------------------------------------------------------
 
-HOST = os.getenv("N3URON_HOST", "localhost")
-PORT = os.getenv("N3URON_PORT", "3443")
+HOST = os.getenv("N3URON_HOST", "altuspower.r3thinklabs.io")
+PORT = os.getenv("N3URON_PORT", "8443")
 AUTH_TYPE = os.getenv("N3URON_AUTH_TYPE", "basic").lower()
 USERNAME = os.getenv("N3URON_USERNAME", "")
 PASSWORD = os.getenv("N3URON_PASSWORD", "")
 TOKEN = os.getenv("N3URON_TOKEN", "")
 VERIFY_SSL = os.getenv("N3URON_VERIFY_SSL", "false").lower() not in ("false", "0", "no")
+DAYS_BACK = int(os.getenv("DAYS_BACK", "7"))
 
 BASE_URL = f"https://{HOST}:{PORT}/tag"
 
-SITES = [
-    "Searchlight",
-    "Valencia",
-    "Dix Solar",
-    "New Hope Ellis Farm",
-    "Florence",
-]
+# Confirmed site folder names from live tag tree
+SITES = {
+    "Searchlight":        "47098_SEARCHLIGHT",
+    "Valencia":           "49701_VALENCIA1",
+    "Dix Solar":          "59722_DIX_SOLAR",
+    "New Hope Ellis Farm":"37474_NEW_HOPE_ELLIS_FA",
+    "Florence":           "57123_FLORENCE",
+}
 
-TAGS_OF_INTEREST = ["W", "TOTWHEXP", "TOTWHIMP"]
+TAGS = ["W", "TOTWHEXP", "TOTWHIMP"]
 
-# Default: last 7 days
+TAG_LABELS = {
+    "W":         "Real Power, 3p Total (kW)",
+    "TOTWHEXP":  "Export Energy, 3p Total (kWh)",
+    "TOTWHIMP":  "Import Energy, 3p Total (kWh)",
+}
+
+TAG_COLORS = {
+    "W":        "#1f77b4",   # blue
+    "TOTWHEXP": "#ff7f0e",   # orange
+    "TOTWHIMP": "#2ca02c",   # green
+}
+
 DEFAULT_END = datetime.now(timezone.utc)
-DEFAULT_START = DEFAULT_END - timedelta(days=7)
+DEFAULT_START = DEFAULT_END - timedelta(days=DAYS_BACK)
 
 
 # ---------------------------------------------------------------------------
-# HTTP helpers
+# HTTP session
 # ---------------------------------------------------------------------------
 
-def _session() -> requests.Session:
+def _build_session() -> requests.Session:
     s = requests.Session()
     if AUTH_TYPE == "token":
         s.headers["Authorization"] = f"Bearer {TOKEN}"
@@ -65,25 +79,37 @@ def _session() -> requests.Session:
     return s
 
 
-SESSION = _session()
+SESSION = _build_session()
 
 
-def _get(params: dict) -> Optional[dict]:
+def _get(params: dict) -> Optional[object]:
     try:
-        resp = SESSION.get(BASE_URL, params=params, timeout=30)
+        resp = SESSION.get(BASE_URL, params=params, timeout=60)
+        if resp.status_code == 401:
+            log.error(
+                "Authentication failed (401). Check N3URON_USERNAME/PASSWORD or TOKEN in .env."
+            )
+            return None
+        if resp.status_code == 403:
+            log.error("Access denied (403). The account may lack permission for this tag path.")
+            return None
         resp.raise_for_status()
         return resp.json()
     except requests.exceptions.SSLError:
         log.error(
-            "SSL certificate verification failed. Set N3URON_VERIFY_SSL=false in .env "
-            "if using a self-signed certificate."
+            "SSL error connecting to %s. If using a self-signed cert, "
+            "set N3URON_VERIFY_SSL=false in .env.",
+            BASE_URL,
         )
         return None
-    except requests.exceptions.ConnectionError as exc:
-        log.error("Cannot connect to N3uron at %s: %s", BASE_URL, exc)
+    except requests.exceptions.ConnectionError:
+        log.error(
+            "Cannot reach %s. Check that the host/port is correct and you are on the right network.",
+            BASE_URL,
+        )
         return None
     except requests.exceptions.HTTPError as exc:
-        log.error("HTTP error %s for params %s", exc.response.status_code, params)
+        log.error("HTTP %s: %s", exc.response.status_code, exc.response.text[:200])
         return None
     except Exception as exc:
         log.error("Unexpected error: %s", exc)
@@ -91,111 +117,27 @@ def _get(params: dict) -> Optional[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Tag discovery
+# Tag path builder
 # ---------------------------------------------------------------------------
 
-def browse_tags(path_prefix: str = "") -> list[str]:
-    """Return child tag/folder names under path_prefix."""
-    data = _get({"cmd": "browse", "path": path_prefix})
-    if data is None:
-        return []
-    # N3uron browse typically returns a list or a dict with a 'tags'/'children' key
-    if isinstance(data, list):
-        return [item.get("name", "") for item in data]
-    if isinstance(data, dict):
-        items = data.get("tags") or data.get("children") or data.get("items") or []
-        return [item.get("name", "") for item in items]
-    return []
-
-
-def discover_site_tags(site_name: str) -> dict[str, str]:
-    """
-    Browse the tag tree looking for W, TOTWHEXP, TOTWHIMP under the given site.
-    Returns {tag_name: full_tag_path} for found tags.
-    Prints discovered paths so the user can verify them before data is pulled.
-    """
-    log.info("Discovering tags for site: %s", site_name)
-    found: dict[str, str] = {}
-
-    # Try common root path patterns
-    candidate_roots = [
-        f"/{site_name}",
-        f"/{site_name.replace(' ', '_')}",
-        f"/Sites/{site_name}",
-        f"/Solar/{site_name}",
-        site_name,
-    ]
-
-    for root in candidate_roots:
-        children = browse_tags(root)
-        if not children:
-            continue
-        log.info("  Found tag tree at: %s  (children: %s)", root, children[:10])
-        for tag in TAGS_OF_INTEREST:
-            # Check direct children first
-            if tag in children:
-                path = f"{root}/{tag}"
-                found[tag] = path
-                log.info("  Discovered %s -> %s", tag, path)
-            else:
-                # One level deeper — look inside each child folder
-                for child in children:
-                    grandchildren = browse_tags(f"{root}/{child}")
-                    if tag in grandchildren:
-                        path = f"{root}/{child}/{tag}"
-                        found[tag] = path
-                        log.info("  Discovered %s -> %s", tag, path)
-        if found:
-            break
-
-    if not found:
-        log.warning(
-            "  No tags found for '%s'. Check that the site name matches the N3uron tag tree. "
-            "Run browse_tags('/') to see top-level paths.",
-            site_name,
-        )
-    return found
+def tag_path(site_folder: str, tag: str) -> str:
+    return f"/ALTUS/{site_folder}/MTR/MTR_001/{tag}"
 
 
 # ---------------------------------------------------------------------------
-# Historical data
+# Data fetching
 # ---------------------------------------------------------------------------
-
-def fetch_history(
-    tag_path: str,
-    start: datetime,
-    end: datetime,
-) -> list[dict]:
-    """Fetch raw historical data for a single tag path."""
-    data = _get(
-        {
-            "cmd": "history",
-            "path": tag_path,
-            "start": start.isoformat(),
-            "end": end.isoformat(),
-            "options.mode": "raw",
-        }
-    )
-    if data is None:
-        return []
-    # Response may be a list of {t, v} records or wrapped in a key
-    if isinstance(data, list):
-        return data
-    if isinstance(data, dict):
-        return data.get("data") or data.get("values") or data.get("records") or []
-    return []
-
 
 def fetch_history_many(
-    tag_paths: list[str],
+    paths: list[str],
     start: datetime,
     end: datetime,
 ) -> dict[str, list[dict]]:
-    """Fetch raw historical data for multiple tags in one request."""
+    """Fetch raw history for multiple tags in a single request."""
     data = _get(
         {
             "cmd": "historyMany",
-            "paths": ",".join(tag_paths),
+            "paths": ",".join(paths),
             "start": start.isoformat(),
             "end": end.isoformat(),
             "options.mode": "raw",
@@ -203,119 +145,141 @@ def fetch_history_many(
     )
     if data is None:
         return {}
-    # Expected: {<path>: [{t, v}, ...], ...}  or  [{path: ..., data: [...]}, ...]
+    # N3uron returns {"/path": [{t, v}, ...], ...}
     if isinstance(data, dict):
         return data
+    # Some versions return [{path: ..., data: [...]}, ...]
     if isinstance(data, list):
         result = {}
         for item in data:
-            path = item.get("path") or item.get("tag")
+            p = item.get("path") or item.get("tag") or item.get("name")
             records = item.get("data") or item.get("values") or []
-            if path:
-                result[path] = records
+            if p:
+                result[p] = records
         return result
     return {}
 
 
-def _parse_records(records: list[dict]) -> tuple[list, list]:
-    """Return (timestamps, values) lists from a list of {t, v} dicts."""
-    timestamps, values = [], []
+def fetch_history_single(
+    path: str,
+    start: datetime,
+    end: datetime,
+) -> list[dict]:
+    """Fetch raw history for a single tag path."""
+    data = _get(
+        {
+            "cmd": "history",
+            "path": path,
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "options.mode": "raw",
+        }
+    )
+    if data is None:
+        return []
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        return data.get("data") or data.get("values") or data.get("records") or []
+    return []
+
+
+def _to_dataframe(records: list[dict]) -> pd.DataFrame:
+    """Convert a list of {t, v} records to a sorted DataFrame."""
+    rows = []
     for rec in records:
         t = rec.get("t") or rec.get("timestamp") or rec.get("time")
         v = rec.get("v") or rec.get("value")
         if t is None or v is None:
             continue
-        # t may be epoch ms, epoch s, or ISO string
         if isinstance(t, (int, float)):
-            if t > 1e10:  # milliseconds
-                t = datetime.fromtimestamp(t / 1000, tz=timezone.utc)
-            else:
-                t = datetime.fromtimestamp(t, tz=timezone.utc)
+            t = datetime.fromtimestamp(t / 1000 if t > 1e10 else t, tz=timezone.utc)
         else:
             t = datetime.fromisoformat(str(t).replace("Z", "+00:00"))
-        timestamps.append(t)
-        values.append(v)
-    return timestamps, values
+        rows.append({"timestamp": t, "value": float(v)})
+    if not rows:
+        return pd.DataFrame(columns=["timestamp", "value"])
+    df = pd.DataFrame(rows).sort_values("timestamp").reset_index(drop=True)
+    return df
 
 
 # ---------------------------------------------------------------------------
 # Charting
 # ---------------------------------------------------------------------------
 
-TAG_COLORS = {
-    "W": "#1f77b4",
-    "TOTWHEXP": "#ff7f0e",
-    "TOTWHIMP": "#2ca02c",
-}
-
-TAG_UNITS = {
-    "W": "W",
-    "TOTWHEXP": "Wh",
-    "TOTWHIMP": "Wh",
-}
-
-
 def build_chart(
     site_name: str,
-    tag_data: dict[str, tuple[list, list]],
+    tag_frames: dict[str, pd.DataFrame],
     start: datetime,
     end: datetime,
 ) -> go.Figure:
     """
-    tag_data: {tag_name: (timestamps, values)}
-    W on left Y-axis; TOTWHEXP on right; TOTWHIMP on far-right.
+    Build a Plotly figure with three Y-axes:
+      - W on the left (y1)
+      - TOTWHEXP on the right (y2)
+      - TOTWHIMP on the far right (y3)
     """
-    fig = make_subplots(specs=[[{"secondary_y": False}]])
+    fig = go.Figure()
 
-    # We need three y-axes: primary (W), secondary (TOTWHEXP), tertiary (TOTWHIMP)
-    y_axis_map = {
-        "W": "y1",
+    yaxis_map = {
+        "W":        "y",
         "TOTWHEXP": "y2",
         "TOTWHIMP": "y3",
     }
 
-    for tag_name, (ts, vs) in tag_data.items():
-        if not ts:
-            log.info("  Skipping %s — no data points.", tag_name)
+    for tag, df in tag_frames.items():
+        if df.empty:
+            log.warning("  %s: no data — trace skipped.", tag)
             continue
         fig.add_trace(
             go.Scatter(
-                x=ts,
-                y=vs,
-                name=f"{tag_name} ({TAG_UNITS.get(tag_name, '')})",
-                line=dict(color=TAG_COLORS.get(tag_name, "#888")),
-                yaxis=y_axis_map.get(tag_name, "y1"),
+                x=df["timestamp"],
+                y=df["value"],
+                name=f"{tag} — {TAG_LABELS[tag]}",
+                line=dict(color=TAG_COLORS[tag], width=1.5),
+                yaxis=yaxis_map[tag],
             )
         )
 
     date_fmt = "%Y-%m-%d"
     fig.update_layout(
-        title=f"{site_name} — {start.strftime(date_fmt)} to {end.strftime(date_fmt)}",
-        xaxis=dict(title="Time", domain=[0.12, 0.88]),
+        title=dict(
+            text=(
+                f"{site_name} — Meter Validation "
+                f"({start.strftime(date_fmt)} to {end.strftime(date_fmt)})"
+            ),
+            font=dict(size=16),
+        ),
+        xaxis=dict(
+            title="Time",
+            domain=[0.08, 0.84],  # leave room for two right-side axes
+        ),
         yaxis=dict(
-            title=f"W ({TAG_UNITS['W']})",
+            title="W — Real Power (kW)",
             titlefont=dict(color=TAG_COLORS["W"]),
             tickfont=dict(color=TAG_COLORS["W"]),
         ),
         yaxis2=dict(
-            title=f"TOTWHEXP ({TAG_UNITS['TOTWHEXP']})",
+            title="TOTWHEXP — Export Energy (kWh)",
             titlefont=dict(color=TAG_COLORS["TOTWHEXP"]),
             tickfont=dict(color=TAG_COLORS["TOTWHEXP"]),
             overlaying="y",
             side="right",
+            anchor="x",
         ),
         yaxis3=dict(
-            title=f"TOTWHIMP ({TAG_UNITS['TOTWHIMP']})",
+            title="TOTWHIMP — Import Energy (kWh)",
             titlefont=dict(color=TAG_COLORS["TOTWHIMP"]),
             tickfont=dict(color=TAG_COLORS["TOTWHIMP"]),
             overlaying="y",
             side="right",
             anchor="free",
-            position=1.0,
+            position=0.92,
         ),
-        legend=dict(x=0.01, y=0.99),
+        legend=dict(x=0.01, y=0.99, bgcolor="rgba(255,255,255,0.8)"),
         hovermode="x unified",
         height=600,
+        margin=dict(r=160),
     )
     return fig
 
@@ -324,70 +288,60 @@ def build_chart(
 # Main
 # ---------------------------------------------------------------------------
 
-def run(
-    start: Optional[datetime] = None,
-    end: Optional[datetime] = None,
-    override_tag_paths: Optional[dict[str, dict[str, str]]] = None,
-):
-    """
-    override_tag_paths: {site_name: {tag_name: tag_path}}
-    Pass this if tag discovery doesn't find paths automatically.
-    """
-    start = start or DEFAULT_START
-    end = end or DEFAULT_END
+def run(start: datetime, end: datetime) -> None:
+    log.info("Date range : %s → %s", start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
+    log.info("Server     : %s:%s", HOST, PORT)
+    log.info("Auth type  : %s", AUTH_TYPE)
+    log.info("SSL verify : %s", VERIFY_SSL)
+    log.info("")
 
-    log.info("Date range: %s → %s", start.isoformat(), end.isoformat())
-    log.info("SSL verification: %s", VERIFY_SSL)
+    for site_name, site_folder in SITES.items():
+        log.info("── %s (%s) ──", site_name, site_folder)
 
-    for site in SITES:
-        log.info("=" * 60)
-        log.info("Site: %s", site)
+        paths = [tag_path(site_folder, tag) for tag in TAGS]
 
-        # Resolve tag paths
-        if override_tag_paths and site in override_tag_paths:
-            tag_paths = override_tag_paths[site]
-        else:
-            tag_paths = discover_site_tags(site)
+        # Try bulk fetch first
+        bulk = fetch_history_many(paths, start, end)
 
-        if not tag_paths:
-            log.warning("Skipping %s — no tag paths found.", site)
-            continue
-
-        # Fetch data (prefer historyMany for efficiency, fall back per-tag)
-        paths_list = list(tag_paths.values())
-        bulk = fetch_history_many(paths_list, start, end)
-
-        tag_data: dict[str, tuple[list, list]] = {}
-        for tag_name, path in tag_paths.items():
+        tag_frames: dict[str, pd.DataFrame] = {}
+        for tag in TAGS:
+            path = tag_path(site_folder, tag)
             if bulk and path in bulk:
                 records = bulk[path]
             else:
-                log.info("  Falling back to single-tag fetch for %s", tag_name)
-                records = fetch_history(path, start, end)
+                log.info("  historyMany miss for %s — falling back to single fetch", tag)
+                records = fetch_history_single(path, start, end)
 
-            if not records:
-                log.warning("  %s (%s): no data returned.", tag_name, path)
-                tag_data[tag_name] = ([], [])
+            df = _to_dataframe(records)
+            if df.empty:
+                log.warning("  %s (%s): no data in range.", tag, path)
             else:
-                ts, vs = _parse_records(records)
-                log.info("  %s: %d points", tag_name, len(ts))
-                tag_data[tag_name] = (ts, vs)
+                log.info("  %s: %d points  (%.2f – %.2f)", tag, len(df), df["value"].min(), df["value"].max())
+            tag_frames[tag] = df
 
-        fig = build_chart(site, tag_data, start, end)
-        filename = f"{site.replace(' ', '_')}_validation.html"
+        fig = build_chart(site_name, tag_frames, start, end)
+        filename = f"{site_folder}_validation.html"
         fig.write_html(filename)
-        log.info("Saved: %s", filename)
+        log.info("  Saved → %s", filename)
+        log.info("")
 
     log.info("Done.")
 
 
 if __name__ == "__main__":
-    # Optionally accept --start and --end as CLI args (ISO 8601)
     import argparse
 
-    parser = argparse.ArgumentParser(description="N3uron site data validator")
-    parser.add_argument("--start", help="Start datetime (ISO 8601)", default=None)
-    parser.add_argument("--end", help="End datetime (ISO 8601)", default=None)
+    parser = argparse.ArgumentParser(description="N3uron Altus Power meter validator")
+    parser.add_argument(
+        "--start",
+        help="Start datetime ISO 8601, e.g. 2024-01-01 (defaults to DAYS_BACK days ago)",
+        default=None,
+    )
+    parser.add_argument(
+        "--end",
+        help="End datetime ISO 8601 (defaults to now)",
+        default=None,
+    )
     args = parser.parse_args()
 
     start_dt = (
@@ -400,16 +354,5 @@ if __name__ == "__main__":
         if args.end
         else DEFAULT_END
     )
-
-    # --- Override tag paths here if auto-discovery doesn't find them ---
-    # Example:
-    # MANUAL_PATHS = {
-    #     "Searchlight": {
-    #         "W": "/Searchlight/Meter/W",
-    #         "TOTWHEXP": "/Searchlight/Meter/TOTWHEXP",
-    #         "TOTWHIMP": "/Searchlight/Meter/TOTWHIMP",
-    #     },
-    # }
-    # run(start_dt, end_dt, override_tag_paths=MANUAL_PATHS)
 
     run(start_dt, end_dt)
