@@ -34,9 +34,9 @@ function WelcomeStep({ onNext }) {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h2 className="text-2xl font-bold text-zinc-100 mb-2">r3think Extraction Tool</h2>
+        <h2 className="text-2xl font-bold text-zinc-100 mb-2">Asset Owner Export Tool</h2>
         <p className="text-zinc-400 leading-relaxed">
-          This tool connects to the AlsoEnergy PowerTrack API to extract site and device
+          This tool connects to the AlsoEnergy PowerTrack API to export site and device
           configuration data for N3uron migration. Everything runs locally — no data leaves
           your machine.
         </p>

@@ -1,4 +1,3 @@
-// UI labels use "Extraction" — internal code calls these "migrations" for legacy compatibility
 import { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -116,7 +115,7 @@ function CompletionView({ job, onDownload }) {
       <div className="rounded-xl border border-emerald-700 bg-emerald-900/10 p-5 flex items-start gap-4">
         <div className="text-emerald-400 text-2xl">✓</div>
         <div>
-          <p className="font-semibold text-emerald-300">Extraction complete</p>
+          <p className="font-semibold text-emerald-300">Export complete</p>
           <p className="text-sm text-emerald-500 mt-0.5">CSV generated and ready to download.</p>
         </div>
       </div>
@@ -130,7 +129,7 @@ function CompletionView({ job, onDownload }) {
 
       <p className="text-sm text-zinc-400">
         Your CSV is ready. Download it below, or find it later in the{' '}
-        <a href="/migrations" className="text-blue-400 hover:text-blue-300">Extractions</a> tab.
+        <a href="/migrations" className="text-blue-400 hover:text-blue-300">Exports</a> tab.
       </p>
       <div className="flex flex-wrap gap-3 items-center">
         <button
@@ -315,7 +314,7 @@ export function MigrationJobDetail() {
       <div className="flex items-start justify-between">
         <div>
           <Link to="/migrations" className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors">
-            ← Extractions
+            ← Exports
           </Link>
           <h1 className="text-xl font-semibold text-zinc-100 mt-2">{job.name}</h1>
           <div className="flex items-center gap-3 mt-1">

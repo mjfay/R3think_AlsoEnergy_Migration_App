@@ -1,4 +1,3 @@
-// UI labels use "Extraction" — internal code calls these "migrations" for legacy compatibility
 import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
@@ -29,11 +28,11 @@ function NameStep({ name, onChange, onNext }) {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-xl font-bold text-zinc-100 mb-1">Name this extraction</h2>
+        <h2 className="text-xl font-bold text-zinc-100 mb-1">Name this export</h2>
         <p className="text-sm text-zinc-400">Used as the CSV filename prefix.</p>
       </div>
       <div>
-        <label className="block text-sm font-medium text-zinc-300 mb-1">Extraction name</label>
+        <label className="block text-sm font-medium text-zinc-300 mb-1">Export name</label>
         <input
           type="text"
           value={name}
@@ -78,7 +77,7 @@ function SiteSelectStep({ selectedIds, onToggle, onSelectAll, onDeselectAll, onN
     <div className="space-y-4">
       <div>
         <h2 className="text-xl font-bold text-zinc-100 mb-1">Select sites</h2>
-        <p className="text-sm text-zinc-400">Choose which sites to include in this extraction.</p>
+        <p className="text-sm text-zinc-400">Choose which sites to include in this export.</p>
       </div>
 
       <div className="flex items-center gap-3">
@@ -163,12 +162,12 @@ function ConfirmStep({ name, selectedIds, includeVirtual, onToggleVirtual, inclu
     <div className="space-y-6">
       <div>
         <h2 className="text-xl font-bold text-zinc-100 mb-1">Confirm and run</h2>
-        <p className="text-sm text-zinc-400">Review before starting the extraction.</p>
+        <p className="text-sm text-zinc-400">Review before starting the export.</p>
       </div>
 
       <div className="border border-zinc-700 rounded-lg divide-y divide-zinc-700">
         <div className="px-4 py-3 flex justify-between">
-          <span className="text-sm text-zinc-400">Extraction name</span>
+          <span className="text-sm text-zinc-400">Export name</span>
           <span className="text-sm text-zinc-200 font-medium">{name}</span>
         </div>
         <div className="px-4 py-3 flex justify-between">
@@ -204,7 +203,7 @@ function ConfirmStep({ name, selectedIds, includeVirtual, onToggleVirtual, inclu
           disabled={creating}
           className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white rounded-lg font-medium transition-colors"
         >
-          {creating ? 'Starting…' : 'Run Extraction'}
+          {creating ? 'Starting…' : 'Run Export'}
         </button>
       </div>
     </div>
@@ -251,7 +250,7 @@ export function NewMigrationJob() {
     <div className="p-6 max-w-2xl mx-auto">
       <div className="mb-6">
         <button onClick={() => navigate('/migrations')} className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors">
-          ← Back to extractions
+          ← Back to exports
         </button>
       </div>
       <Steps current={step} />

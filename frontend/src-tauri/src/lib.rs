@@ -121,7 +121,7 @@ pub fn run() {
                 // Write a log file so Windows users can share it for debugging.
                 .target(tauri_plugin_log::Target::new(
                     tauri_plugin_log::TargetKind::LogDir {
-                        file_name: Some("r3think-backend".into()),
+                        file_name: Some("export-tool-backend".into()),
                     },
                 ))
                 .build(),

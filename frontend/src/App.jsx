@@ -1,8 +1,6 @@
-// UI labels use "Extraction" — internal code calls these "migrations" for legacy compatibility
 import { useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import r3thinkLogo from './assets/r3think-logo.png'
 import { Dashboard } from './pages/Dashboard'
 import { SitesList } from './pages/SitesList'
 import { SiteDetail } from './pages/SiteDetail'
@@ -26,10 +24,9 @@ function MainApp() {
     <div className="min-h-screen bg-zinc-950 text-zinc-200">
       <nav className="border-b border-zinc-800 bg-zinc-900/80 backdrop-blur sticky top-0 z-40">
         <div className="max-w-6xl mx-auto px-6 py-2 flex items-center gap-2">
-          <img src={r3thinkLogo} alt="r3think labs" className="h-6 mr-4 object-contain" />
           <NavLink to="/" end className={navCls}>Dashboard</NavLink>
           <NavLink to="/sites" className={navCls}>Sites</NavLink>
-          <NavLink to="/migrations" className={navCls}>Extractions</NavLink>
+          <NavLink to="/migrations" className={navCls}>Exports</NavLink>
           <div className="ml-auto">
             <NavLink
               to="/settings"

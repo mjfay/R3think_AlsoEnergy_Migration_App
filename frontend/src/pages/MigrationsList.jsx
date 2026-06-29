@@ -1,4 +1,3 @@
-// UI labels use "Extraction" — internal code calls these "migrations" for legacy compatibility
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from 'react-router-dom'
 import { api, getBase } from '../lib/api'
@@ -23,7 +22,7 @@ function DownloadButton({ job }) {
   async function handleDownload(e) {
     e.preventDefault()
     e.stopPropagation()
-    const safeName = (job.name || 'extraction').replace(/[^a-z0-9_\-]/gi, '_')
+    const safeName = (job.name || 'export').replace(/[^a-z0-9_\-]/gi, '_')
     const dateStr = new Date().toISOString().slice(0, 10)
     const suggestedName = `${safeName}_${dateStr}.csv`
 
@@ -77,16 +76,16 @@ export function MigrationsList() {
     <div className="p-6 max-w-5xl mx-auto space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold text-zinc-100">Extractions</h1>
+          <h1 className="text-xl font-semibold text-zinc-100">Exports</h1>
           <p className="text-sm text-zinc-500 mt-0.5">
-            Each extraction syncs a set of sites and produces a CSV for N3uron migration.
+            Each export syncs a set of sites and produces a CSV for N3uron migration.
           </p>
         </div>
         <Link
           to="/migrations/new"
           className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors"
         >
-          + New Extraction
+          + New Export
         </Link>
       </div>
 
@@ -96,12 +95,12 @@ export function MigrationsList() {
 
       {!isLoading && jobs.length === 0 && (
         <div className="border border-zinc-700 rounded-xl p-12 text-center">
-          <p className="text-zinc-400 mb-4">No extractions yet.</p>
+          <p className="text-zinc-400 mb-4">No exports yet.</p>
           <Link
             to="/migrations/new"
             className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors"
           >
-            Start your first extraction
+            Start your first export
           </Link>
         </div>
       )}
