@@ -24,7 +24,9 @@ export function SyncProgressDrawer({ open, onClose, onDone, limit = 0, syncUrl =
       if (ev.type === 'sites_loaded') {
         setProgress({ current: 0, total: ev.total })
       } else if (ev.type === 'site_done' || ev.type === 'site_error') {
-        setProgress({ current: ev.index, total: ev.total })
+        // Sites sync concurrently, so ev.index (a site's fixed position) can arrive
+        // out of order — count completions instead so progress never regresses.
+        setProgress(prev => ({ current: prev.current + 1, total: ev.total }))
       } else if (ev.type === 'done' || ev.type === 'error') {
         setDone(true)
         es.close()
@@ -70,6 +72,13 @@ export function SyncProgressDrawer({ open, onClose, onDone, limit = 0, syncUrl =
                 style={{ width: `${pct}%` }}
               />
             </div>
+          </div>
+        )}
+
+        {events.length === 0 && !done && (
+          <div className="flex items-center justify-center gap-3 px-4 py-12">
+            <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+            <span className="text-sm text-zinc-400">Connecting…</span>
           </div>
         )}
 

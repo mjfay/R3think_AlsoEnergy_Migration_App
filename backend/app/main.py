@@ -108,8 +108,16 @@ async def credentials_status(user: UserSession = Depends(get_user_session)):
 
 @app.post("/api/credentials")
 async def save_credentials(payload: CredentialPayload, user: UserSession = Depends(get_user_session)):
-    """Attach credentials to this session only. Does NOT authenticate yet."""
+    """Attach credentials to this session and authenticate immediately, so the
+    token status reflects reality right away instead of lagging until the next
+    API call lazily refreshes it."""
     user.set_credentials(payload.username, payload.password)
+    try:
+        token, expires_at = await ae_client.authenticate_with(payload.username, payload.password)
+        user.access_token = token
+        user.token_expires_at = expires_at
+    except Exception:
+        pass  # credentials are still saved; token will be fetched lazily on first use
     return {"ok": True}
 
 @app.delete("/api/credentials")
