@@ -2,19 +2,20 @@ import argparse
 import asyncio
 import json
 import os
+import pathlib
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import AsyncIterator
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlmodel import Session, func, select
 
 from app.alsoenergy import AuthError, client as ae_client
-from app.credentials import delete as creds_delete
-from app.credentials import has_credentials, load as creds_load, save as creds_save
+from app.config import settings
 from app.csv_export import TOOL_VERSION, generate_csv
 from app.db import engine, get_session, init_db
 from app.models import (
@@ -22,6 +23,7 @@ from app.models import (
     JOB_STATUS_CANCELLED, JOB_STATUS_DONE, JOB_STATUS_EMAILED,
     JOB_STATUS_ERROR, JOB_STATUS_PENDING, JOB_STATUS_RUNNING,
 )
+from app.session import SESSION_COOKIE, UserSession, get_or_create as get_or_create_session
 from app.sync import sync_all, sync_all_sites, sync_site_hardware
 
 
@@ -43,16 +45,43 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="AlsoEnergy Migration API", lifespan=lifespan)
 
-# Allow any origin — the server only binds to 127.0.0.1 so there is no
-# external access risk. Tauri webview uses tauri://localhost, dev uses
-# http://localhost:5173; wildcard covers both without maintaining a list.
+# Explicit origin list (not "*") because the session cookie requires
+# allow_credentials=True, and browsers reject that combined with a wildcard origin.
+# Same-origin requests (the deployed web app, served from this same FastAPI process)
+# aren't affected by CORS at all — this list only matters for the Vite dev server
+# and the Tauri desktop webview, which talk to the backend cross-origin.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
+    allow_origins=["http://localhost:5173", "tauri://localhost", "http://tauri.localhost"],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def session_middleware(request: Request, call_next):
+    """Attach a per-browser UserSession to every request, issuing a new session
+    cookie on first visit. See app/session.py for what lives on a UserSession
+    and why nothing here is ever shared across sessions."""
+    existing_id = request.cookies.get(SESSION_COOKIE)
+    user, is_new = get_or_create_session(existing_id)
+    request.state.user_session = user
+    response = await call_next(request)
+    if is_new:
+        response.set_cookie(
+            SESSION_COOKIE,
+            user.session_id,
+            httponly=True,
+            secure=settings.session_cookie_secure,
+            samesite="lax",
+            max_age=24 * 60 * 60,
+        )
+    return response
+
+
+def get_user_session(request: Request) -> UserSession:
+    return request.state.user_session
 
 
 # ---------------------------------------------------------------------------
@@ -60,12 +89,12 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 
 @app.get("/api/health")
-async def health():
-    return {"ok": True, "token": ae_client.token_status}
+async def health(user: UserSession = Depends(get_user_session)):
+    return {"ok": True, "token": user.token_status()}
 
 
 # ---------------------------------------------------------------------------
-# Credentials + auth endpoints
+# Credentials + auth endpoints — scoped to the caller's session only
 # ---------------------------------------------------------------------------
 
 class CredentialPayload(BaseModel):
@@ -73,34 +102,31 @@ class CredentialPayload(BaseModel):
     password: str
 
 @app.get("/api/credentials/status")
-async def credentials_status():
-    """Returns whether credentials are stored in the OS keyring."""
-    stored = has_credentials()
-    return {"stored": stored}
+async def credentials_status(user: UserSession = Depends(get_user_session)):
+    """Returns whether this browser session has AlsoEnergy credentials set."""
+    return {"stored": user.has_credentials()}
 
 @app.post("/api/credentials")
-async def save_credentials(payload: CredentialPayload):
-    """Save credentials to the OS keyring. Does NOT authenticate."""
-    creds_save(payload.username, payload.password)
+async def save_credentials(payload: CredentialPayload, user: UserSession = Depends(get_user_session)):
+    """Attach credentials to this session only. Does NOT authenticate yet."""
+    user.set_credentials(payload.username, payload.password)
     return {"ok": True}
 
 @app.delete("/api/credentials")
-async def clear_credentials():
-    """Remove credentials from the OS keyring and clear any active token."""
-    creds_delete()
-    ae_client._access_token = None
-    ae_client._expires_at = 0.0
+async def clear_credentials(user: UserSession = Depends(get_user_session)):
+    """Clear this session's credentials and any active token."""
+    user.clear_credentials()
     return {"ok": True}
 
 @app.post("/api/auth/test")
 async def test_auth(payload: CredentialPayload):
     """
-    Test credentials without saving them.
+    Test credentials without saving them to any session.
     Returns ok=True + tokenStatus if valid, error message if not.
     """
     try:
-        await ae_client._authenticate_with(payload.username, payload.password)
-        return {"ok": True, "tokenStatus": ae_client.token_status}
+        await ae_client.authenticate_with(payload.username, payload.password)
+        return {"ok": True, "tokenStatus": {"status": "valid"}}
     except AuthError as exc:
         return {"ok": False, "error": str(exc)}
     except Exception as exc:
@@ -112,21 +138,25 @@ async def test_auth(payload: CredentialPayload):
 # ---------------------------------------------------------------------------
 
 @app.post("/api/sync/sites")
-async def sync_sites(session: Session = Depends(get_session)):
-    count = await sync_all_sites(session)
+async def sync_sites(session: Session = Depends(get_session), user: UserSession = Depends(get_user_session)):
+    count = await sync_all_sites(session, user)
     return {"synced": count}
 
 
 @app.post("/api/sync/site/{site_id}")
-async def sync_one_site(site_id: int, session: Session = Depends(get_session)):
-    hw_count = await sync_site_hardware(session, site_id)
+async def sync_one_site(
+    site_id: int,
+    session: Session = Depends(get_session),
+    user: UserSession = Depends(get_user_session),
+):
+    hw_count = await sync_site_hardware(session, user, site_id)
     return {"siteId": site_id, "devicesSynced": hw_count}
 
 
 @app.get("/api/ae/sites")
-async def ae_site_list():
+async def ae_site_list(user: UserSession = Depends(get_user_session)):
     """Return the live site list from AlsoEnergy for the sync picker (not cached)."""
-    sites_raw = await ae_client.get_sites()
+    sites_raw = await ae_client.get_sites(user)
     return [
         {
             "siteId": s.get("siteId"),
@@ -142,6 +172,7 @@ async def ae_site_list():
 @app.get("/api/sync/all")
 async def sync_all_sse(
     session: Session = Depends(get_session),
+    user: UserSession = Depends(get_user_session),
     limit: int = 0,
     site_ids: str = "",
 ):
@@ -156,7 +187,7 @@ async def sync_all_sse(
 
     async def run_sync():
         try:
-            await sync_all(session, progress_cb, limit=limit or None, site_ids=parsed_ids or None)
+            await sync_all(session, user, progress_cb, limit=limit or None, site_ids=parsed_ids or None)
         except Exception as exc:
             await queue.put({"type": "error", "error": str(exc)})
         finally:
@@ -177,16 +208,18 @@ async def sync_all_sse(
 
 
 # ---------------------------------------------------------------------------
-# Read endpoints
+# Read endpoints — all scoped to the caller's session
 # ---------------------------------------------------------------------------
 
 @app.get("/api/sites")
-def list_sites(session: Session = Depends(get_session)):
-    sites = session.exec(select(Site)).all()
+def list_sites(session: Session = Depends(get_session), user: UserSession = Depends(get_user_session)):
+    sites = session.exec(select(Site).where(Site.session_id == user.session_id)).all()
     result = []
     for site in sites:
         hw_count = session.exec(
-            select(func.count(Hardware.id)).where(Hardware.site_id == site.site_id)
+            select(func.count(Hardware.id)).where(
+                Hardware.session_id == user.session_id, Hardware.site_id == site.site_id
+            )
         ).one()
         result.append({
             "siteId": site.site_id,
@@ -199,11 +232,13 @@ def list_sites(session: Session = Depends(get_session)):
 
 
 @app.get("/api/sites/{site_id}")
-def get_site(site_id: int, session: Session = Depends(get_session)):
-    site = session.get(Site, site_id)
+def get_site(site_id: int, session: Session = Depends(get_session), user: UserSession = Depends(get_user_session)):
+    site = session.get(Site, (user.session_id, site_id))
     if not site:
         raise HTTPException(404, f"Site {site_id} not found in cache")
-    hardware = session.exec(select(Hardware).where(Hardware.site_id == site_id)).all()
+    hardware = session.exec(
+        select(Hardware).where(Hardware.session_id == user.session_id, Hardware.site_id == site_id)
+    ).all()
     return {
         "site": _site_dict(site),
         "hardware": [_hw_dict(h) for h in hardware],
@@ -211,25 +246,32 @@ def get_site(site_id: int, session: Session = Depends(get_session)):
 
 
 @app.get("/api/sites/{site_id}/hardware/{hardware_id}")
-def get_hardware_detail(site_id: int, hardware_id: int, session: Session = Depends(get_session)):
-    hw = session.get(Hardware, hardware_id)
+def get_hardware_detail(
+    site_id: int,
+    hardware_id: int,
+    session: Session = Depends(get_session),
+    user: UserSession = Depends(get_user_session),
+):
+    hw = session.get(Hardware, (user.session_id, hardware_id))
     if not hw or hw.site_id != site_id:
         raise HTTPException(404, f"Hardware {hardware_id} not found")
     result = _hw_dict(hw)
     if hw.gateway_id:
-        gw = session.get(Gateway, hw.gateway_id)
+        gw = session.get(Gateway, (user.session_id, hw.gateway_id))
         result["gateway"] = _gw_summary(gw) if gw else {"gatewayId": hw.gateway_id}
     return result
 
 
 @app.get("/api/export/site/{site_id}")
-def export_site(site_id: int, session: Session = Depends(get_session)):
-    site = session.get(Site, site_id)
+def export_site(site_id: int, session: Session = Depends(get_session), user: UserSession = Depends(get_user_session)):
+    site = session.get(Site, (user.session_id, site_id))
     if not site:
         raise HTTPException(404, f"Site {site_id} not found in cache")
-    hardware = session.exec(select(Hardware).where(Hardware.site_id == site_id)).all()
+    hardware = session.exec(
+        select(Hardware).where(Hardware.session_id == user.session_id, Hardware.site_id == site_id)
+    ).all()
     gateway_ids = {h.gateway_id for h in hardware if h.gateway_id}
-    gateways = [session.get(Gateway, gid) for gid in gateway_ids]
+    gateways = [session.get(Gateway, (user.session_id, gid)) for gid in gateway_ids]
     return {
         "site": json.loads(site.raw_json),
         "hardware": [json.loads(h.raw_json) for h in hardware],
@@ -252,12 +294,15 @@ def export_csv_site(
     job_name: str = "export",
     include_virtual: bool = True,
     session: Session = Depends(get_session),
+    user: UserSession = Depends(get_user_session),
 ):
     """Download a 31-column CSV for a single site."""
-    site = session.get(Site, site_id)
+    site = session.get(Site, (user.session_id, site_id))
     if not site:
         raise HTTPException(404, f"Site {site_id} not found in cache")
-    csv_text = generate_csv(session, [site_id], job_name=job_name, include_virtual=include_virtual)
+    csv_text = generate_csv(
+        session, user.session_id, [site_id], job_name=job_name, include_virtual=include_virtual
+    )
     safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in job_name)
     filename = f"{safe_name}_{datetime.utcnow().strftime('%Y-%m-%d')}.csv"
     return Response(
@@ -274,12 +319,17 @@ class MultiSiteExportPayload(BaseModel):
 
 
 @app.post("/api/export/csv")
-def export_csv_multi(payload: MultiSiteExportPayload, session: Session = Depends(get_session)):
+def export_csv_multi(
+    payload: MultiSiteExportPayload,
+    session: Session = Depends(get_session),
+    user: UserSession = Depends(get_user_session),
+):
     """Download a 31-column CSV for multiple sites."""
     if not payload.site_ids:
         raise HTTPException(400, "site_ids must not be empty")
     csv_text = generate_csv(
         session,
+        user.session_id,
         payload.site_ids,
         job_name=payload.job_name,
         include_virtual=payload.include_virtual,
@@ -298,12 +348,14 @@ def export_csv_multi(payload: MultiSiteExportPayload, session: Session = Depends
 # ---------------------------------------------------------------------------
 
 @app.get("/api/gateways")
-def list_gateways(session: Session = Depends(get_session)):
-    gateways = session.exec(select(Gateway)).all()
+def list_gateways(session: Session = Depends(get_session), user: UserSession = Depends(get_user_session)):
+    gateways = session.exec(select(Gateway).where(Gateway.session_id == user.session_id)).all()
     result = []
     for gw in gateways:
         device_count = session.exec(
-            select(func.count(Hardware.id)).where(Hardware.gateway_id == gw.gateway_id)
+            select(func.count(Hardware.id)).where(
+                Hardware.session_id == user.session_id, Hardware.gateway_id == gw.gateway_id
+            )
         ).one()
         result.append({
             "gatewayId": gw.gateway_id,
@@ -317,11 +369,17 @@ def list_gateways(session: Session = Depends(get_session)):
 
 
 @app.get("/api/gateways/{gateway_id}")
-def get_gateway(gateway_id: str, session: Session = Depends(get_session)):
-    gw = session.get(Gateway, gateway_id)
+def get_gateway(
+    gateway_id: str,
+    session: Session = Depends(get_session),
+    user: UserSession = Depends(get_user_session),
+):
+    gw = session.get(Gateway, (user.session_id, gateway_id))
     if not gw:
         raise HTTPException(404, f"Gateway {gateway_id} not found")
-    devices = session.exec(select(Hardware).where(Hardware.gateway_id == gateway_id)).all()
+    devices = session.exec(
+        select(Hardware).where(Hardware.session_id == user.session_id, Hardware.gateway_id == gateway_id)
+    ).all()
     return {
         "gatewayId": gw.gateway_id,
         "name": gw.name,
@@ -372,14 +430,28 @@ def _job_dict(job: MigrationJob) -> dict:
     }
 
 
+def _get_owned_job(session: Session, user: UserSession, job_id: int) -> MigrationJob:
+    """Fetch a job, but only if it belongs to the caller's session — otherwise 404
+    exactly as if it didn't exist, so job ids can't be enumerated across tenants."""
+    job = session.get(MigrationJob, job_id)
+    if not job or job.session_id != user.session_id:
+        raise HTTPException(404, f"Job {job_id} not found")
+    return job
+
+
 @app.post("/api/jobs")
-def create_job(payload: CreateJobPayload, session: Session = Depends(get_session)):
+def create_job(
+    payload: CreateJobPayload,
+    session: Session = Depends(get_session),
+    user: UserSession = Depends(get_user_session),
+):
     if not payload.name.strip():
         raise HTTPException(400, "Job name is required")
     if not payload.site_ids:
         raise HTTPException(400, "At least one site must be selected")
     job = MigrationJob(
         name=payload.name.strip(),
+        session_id=user.session_id,
         status=JOB_STATUS_PENDING,
         site_ids_json=json.dumps(payload.site_ids),
         include_virtual=payload.include_virtual,
@@ -393,25 +465,24 @@ def create_job(payload: CreateJobPayload, session: Session = Depends(get_session
 
 
 @app.get("/api/jobs")
-def list_jobs(session: Session = Depends(get_session)):
-    jobs = session.exec(select(MigrationJob).order_by(MigrationJob.created_at.desc())).all()
+def list_jobs(session: Session = Depends(get_session), user: UserSession = Depends(get_user_session)):
+    jobs = session.exec(
+        select(MigrationJob)
+        .where(MigrationJob.session_id == user.session_id)
+        .order_by(MigrationJob.created_at.desc())
+    ).all()
     return [_job_dict(j) for j in jobs]
 
 
 @app.get("/api/jobs/{job_id}")
-def get_job(job_id: int, session: Session = Depends(get_session)):
-    job = session.get(MigrationJob, job_id)
-    if not job:
-        raise HTTPException(404, f"Job {job_id} not found")
-    return _job_dict(job)
+def get_job(job_id: int, session: Session = Depends(get_session), user: UserSession = Depends(get_user_session)):
+    return _job_dict(_get_owned_job(session, user, job_id))
 
 
 @app.get("/api/jobs/{job_id}/events")
-async def run_job(job_id: int, session: Session = Depends(get_session)):
+async def run_job(job_id: int, session: Session = Depends(get_session), user: UserSession = Depends(get_user_session)):
     """SSE stream: sync selected sites then generate CSV."""
-    job = session.get(MigrationJob, job_id)
-    if not job:
-        raise HTTPException(404, f"Job {job_id} not found")
+    job = _get_owned_job(session, user, job_id)
     if job.status == JOB_STATUS_RUNNING:
         raise HTTPException(409, "Job is already running")
 
@@ -446,12 +517,12 @@ async def run_job(job_id: int, session: Session = Depends(get_session)):
                 await queue.put({"type": "cancelled", "index": i, "total": len(site_ids)})
                 break
 
-            site = session.get(Site, sid)
+            site = session.get(Site, (user.session_id, sid))
             site_name = site.site_name if site else str(sid)
             await queue.put({"type": "site_start", "index": i + 1, "total": len(site_ids),
                              "siteId": sid, "siteName": site_name})
             try:
-                count = await sync_site_hardware(session, sid)
+                count = await sync_site_hardware(session, user, sid)
                 total_devices += count
                 sites_done += 1
                 await queue.put({"type": "site_done", "index": i + 1, "total": len(site_ids),
@@ -480,13 +551,15 @@ async def run_job(job_id: int, session: Session = Depends(get_session)):
             for sid in site_ids:
                 virt = session.exec(
                     sel(func.count(Hardware.id)).where(
-                        Hardware.site_id == sid, Hardware.is_virtual_device == True
+                        Hardware.session_id == user.session_id,
+                        Hardware.site_id == sid,
+                        Hardware.is_virtual_device == True,
                     )
                 ).one()
                 total_virtual += virt
 
             csv_text = generate_csv(
-                session, site_ids,
+                session, user.session_id, site_ids,
                 job_name=job.name,
                 include_virtual=job.include_virtual,
                 include_data_devices=job.include_data_devices,
@@ -554,10 +627,8 @@ async def run_job(job_id: int, session: Session = Depends(get_session)):
 
 
 @app.post("/api/jobs/{job_id}/cancel")
-def cancel_job(job_id: int, session: Session = Depends(get_session)):
-    job = session.get(MigrationJob, job_id)
-    if not job:
-        raise HTTPException(404, f"Job {job_id} not found")
+def cancel_job(job_id: int, session: Session = Depends(get_session), user: UserSession = Depends(get_user_session)):
+    job = _get_owned_job(session, user, job_id)
 
     # Signal cooperative cancellation (checked between sites)
     if job_id in _cancel_events:
@@ -580,10 +651,8 @@ def cancel_job(job_id: int, session: Session = Depends(get_session)):
 
 
 @app.get("/api/jobs/{job_id}/csv")
-def download_job_csv(job_id: int, session: Session = Depends(get_session)):
-    job = session.get(MigrationJob, job_id)
-    if not job:
-        raise HTTPException(404, f"Job {job_id} not found")
+def download_job_csv(job_id: int, session: Session = Depends(get_session), user: UserSession = Depends(get_user_session)):
+    job = _get_owned_job(session, user, job_id)
     if not job.csv_path or not os.path.exists(job.csv_path):
         raise HTTPException(404, "CSV not available — run the job first")
     with open(job.csv_path, "r", encoding="utf-8-sig") as f:
@@ -597,10 +666,8 @@ def download_job_csv(job_id: int, session: Session = Depends(get_session)):
 
 
 @app.post("/api/jobs/{job_id}/mark-emailed")
-def mark_emailed(job_id: int, session: Session = Depends(get_session)):
-    job = session.get(MigrationJob, job_id)
-    if not job:
-        raise HTTPException(404, f"Job {job_id} not found")
+def mark_emailed(job_id: int, session: Session = Depends(get_session), user: UserSession = Depends(get_user_session)):
+    job = _get_owned_job(session, user, job_id)
     job.status = JOB_STATUS_EMAILED
     job.emailed_at = datetime.now(timezone.utc)
     session.add(job)
@@ -614,28 +681,29 @@ def mark_emailed(job_id: int, session: Session = Depends(get_session)):
 
 @app.get("/api/admin/data-dir")
 def data_dir():
-    """Returns the directory where the DB and exports are stored."""
+    """Returns the directory where the (shared, session-scoped) DB and exports are stored."""
     return {"dataDir": os.getcwd(), "exportsDir": os.path.join(os.getcwd(), "exports")}
 
 
 @app.post("/api/admin/clear-cache")
-def clear_cache(session: Session = Depends(get_session)):
-    """Wipe all cached sync data (sites, hardware, gateways). Migration jobs are preserved."""
+def clear_cache(session: Session = Depends(get_session), user: UserSession = Depends(get_user_session)):
+    """Wipe this session's cached sync data (sites, hardware, gateways). Other
+    tenants' data and this session's migration jobs are untouched."""
     from sqlalchemy import text as sa_text
     with session.bind.connect() as conn:
-        conn.execute(sa_text("DELETE FROM hardware"))
-        conn.execute(sa_text("DELETE FROM gateways"))
-        conn.execute(sa_text("DELETE FROM sites"))
+        conn.execute(sa_text("DELETE FROM hardware WHERE session_id = :sid"), {"sid": user.session_id})
+        conn.execute(sa_text("DELETE FROM gateways WHERE session_id = :sid"), {"sid": user.session_id})
+        conn.execute(sa_text("DELETE FROM sites WHERE session_id = :sid"), {"sid": user.session_id})
         conn.commit()
     return {"ok": True}
 
 
 @app.post("/api/admin/clear-migration-history")
-def clear_migration_history(session: Session = Depends(get_session)):
-    """Delete all migration jobs and their associated CSV paths."""
+def clear_migration_history(session: Session = Depends(get_session), user: UserSession = Depends(get_user_session)):
+    """Delete this session's migration jobs. Other tenants' jobs are untouched."""
     from sqlalchemy import text as sa_text
     with session.bind.connect() as conn:
-        conn.execute(sa_text("DELETE FROM migration_jobs"))
+        conn.execute(sa_text("DELETE FROM migration_jobs WHERE session_id = :sid"), {"sid": user.session_id})
         conn.commit()
     return {"ok": True}
 
@@ -645,12 +713,13 @@ def clear_migration_history(session: Session = Depends(get_session)):
 # ---------------------------------------------------------------------------
 
 @app.get("/api/stats")
-def stats(session: Session = Depends(get_session)):
-    site_count = session.exec(select(func.count(Site.site_id))).one()
-    hw_count = session.exec(select(func.count(Hardware.id))).one()
-    gw_count = session.exec(select(func.count(Gateway.gateway_id))).one()
+def stats(session: Session = Depends(get_session), user: UserSession = Depends(get_user_session)):
+    sid = user.session_id
+    site_count = session.exec(select(func.count(Site.site_id)).where(Site.session_id == sid)).one()
+    hw_count = session.exec(select(func.count(Hardware.id)).where(Hardware.session_id == sid)).one()
+    gw_count = session.exec(select(func.count(Gateway.gateway_id)).where(Gateway.session_id == sid)).one()
     last_synced = session.exec(
-        select(Site.last_synced).order_by(Site.last_synced.desc()).limit(1)
+        select(Site.last_synced).where(Site.session_id == sid).order_by(Site.last_synced.desc()).limit(1)
     ).first()
     return {
         "totalSites": site_count,
@@ -727,7 +796,8 @@ def _gw_summary(gw: Gateway) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Discovery
+# Discovery (not currently linked from the frontend nav, kept session-scoped
+# for consistency with every other cached-data endpoint)
 # ---------------------------------------------------------------------------
 
 # In-memory scan state: True = scan running
@@ -751,12 +821,11 @@ def _com_type_category(hw_dict: dict) -> str:
 
 
 @app.get("/api/discovery/results")
-def discovery_results(session: Session = Depends(get_session)):
+def discovery_results(session: Session = Depends(get_session), user: UserSession = Depends(get_user_session)):
     rows = session.exec(
-        select(DiscoveryResult).order_by(
-            DiscoveryResult.tcp_count.desc(),
-            DiscoveryResult.site_name,
-        )
+        select(DiscoveryResult)
+        .where(DiscoveryResult.session_id == user.session_id)
+        .order_by(DiscoveryResult.tcp_count.desc(), DiscoveryResult.site_name)
     ).all()
     return [
         {
@@ -772,7 +841,7 @@ def discovery_results(session: Session = Depends(get_session)):
 
 
 @app.get("/api/discovery/events")
-async def discovery_scan_sse(session: Session = Depends(get_session)):
+async def discovery_scan_sse(session: Session = Depends(get_session), user: UserSession = Depends(get_user_session)):
     """SSE stream: scan all sites for comType breakdown. Results cached in DB."""
     global _discovery_running, _discovery_queue
 
@@ -782,11 +851,12 @@ async def discovery_scan_sse(session: Session = Depends(get_session)):
     _discovery_running = True
     queue: asyncio.Queue = asyncio.Queue()
     _discovery_queue = queue
+    session_id = user.session_id
 
     async def _run():
         global _discovery_running
         try:
-            sites_raw = await ae_client.get_sites()
+            sites_raw = await ae_client.get_sites(user)
             total = len(sites_raw)
             await queue.put({"type": "started", "total": total})
 
@@ -806,6 +876,7 @@ async def discovery_scan_sse(session: Session = Depends(get_session)):
                     tcp = rtu = unknown = 0
                     try:
                         hw_resp = await ae_client.get_site_hardware(
+                            user,
                             site_id,
                             include_archived_fields=False,
                             include_summary_fields=False,
@@ -836,7 +907,7 @@ async def discovery_scan_sse(session: Session = Depends(get_session)):
                         return
 
                     # Upsert result
-                    existing = session.get(DiscoveryResult, site_id)
+                    existing = session.get(DiscoveryResult, (session_id, site_id))
                     if existing:
                         existing.site_name = site_name
                         existing.tcp_count = tcp
@@ -846,6 +917,7 @@ async def discovery_scan_sse(session: Session = Depends(get_session)):
                         session.add(existing)
                     else:
                         session.add(DiscoveryResult(
+                            session_id=session_id,
                             site_id=site_id,
                             site_name=site_name,
                             tcp_count=tcp,
@@ -889,6 +961,31 @@ async def discovery_scan_sse(session: Session = Depends(get_session)):
             task.cancel()
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+# ---------------------------------------------------------------------------
+# Frontend static files (browser / no-install mode)
+# Serves the pre-built Vite output so users can open the app in a browser
+# without installing the Tauri desktop app.
+# ---------------------------------------------------------------------------
+
+_FRONTEND_DIST = pathlib.Path(__file__).parent.parent.parent / "frontend" / "dist"
+
+if _FRONTEND_DIST.exists():
+    app.mount("/assets", StaticFiles(directory=_FRONTEND_DIST / "assets"), name="static-assets")
+
+    @app.get("/favicon.svg", include_in_schema=False)
+    async def _favicon():
+        return FileResponse(_FRONTEND_DIST / "favicon.svg")
+
+    @app.get("/icons.svg", include_in_schema=False)
+    async def _icons():
+        return FileResponse(_FRONTEND_DIST / "icons.svg")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def _spa_fallback(full_path: str):
+        """Serve index.html for all non-API routes so the React SPA handles routing."""
+        return FileResponse(_FRONTEND_DIST / "index.html")
 
 
 # ---------------------------------------------------------------------------

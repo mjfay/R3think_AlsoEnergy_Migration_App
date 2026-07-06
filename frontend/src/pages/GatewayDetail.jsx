@@ -25,10 +25,10 @@ export function GatewayDetail() {
       {/* Header */}
       <div>
         <button
-          onClick={() => gw.siteId ? navigate(`/sites/${gw.siteId}`) : navigate('/sites')}
+          onClick={() => gw.siteId ? navigate(`/sites/${gw.siteId}`) : navigate('/')}
           className="text-xs text-zinc-500 hover:text-zinc-300 mb-2 block"
         >
-          ← {gw.siteId ? `Site ${gw.siteId}` : 'Sites'}
+          ← {gw.siteId ? `Site ${gw.siteId}` : 'Dashboard'}
         </button>
         <h1 className="text-xl font-semibold text-zinc-100">{gw.name}</h1>
         <div className="text-xs font-mono text-zinc-500 mt-0.5 flex items-center gap-1">

@@ -34,7 +34,7 @@ export function Discovery() {
     setScanError('')
     setProgress({ current: 0, total: 0, siteName: '' })
 
-    const es = new EventSource(`${getBase()}/discovery/events`)
+    const es = new EventSource(`${getBase()}/discovery/events`, { withCredentials: true })
     esRef.current = es
 
     es.onmessage = (e) => {
@@ -98,7 +98,7 @@ export function Discovery() {
         <div>
           <h1 className="text-xl font-semibold text-zinc-100">TCP Device Discovery</h1>
           <p className="text-sm text-zinc-500 mt-1">
-            Scans your AlsoEnergy portfolio and reports which sites contain Modbus TCP devices.
+            Scans your portfolio and reports which sites contain Modbus TCP devices.
             Use this to pick sites for migration validation.
           </p>
         </div>
@@ -213,7 +213,7 @@ export function Discovery() {
                     <td className="px-4 py-2.5 text-xs text-zinc-600">{row.unknownCount || '—'}</td>
                     <td className="px-4 py-2.5">
                       <button
-                        onClick={() => navigate(`/migrations/new?siteId=${row.siteId}&siteName=${encodeURIComponent(row.siteName)}`)}
+                        onClick={() => navigate(`/export?siteId=${row.siteId}&siteName=${encodeURIComponent(row.siteName)}`)}
                         className="text-xs px-2.5 py-1 border border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:border-zinc-500 rounded transition-colors whitespace-nowrap"
                       >
                         Start Migration Job

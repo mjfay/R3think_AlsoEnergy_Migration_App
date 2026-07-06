@@ -96,7 +96,7 @@ export function SiteDetail() {
     <div className="p-6 max-w-6xl mx-auto space-y-5">
       {/* Header */}
       <div>
-        <button onClick={() => navigate('/sites')} className="text-xs text-zinc-500 hover:text-zinc-300 mb-2 block">← Sites</button>
+        <button onClick={() => navigate('/')} className="text-xs text-zinc-500 hover:text-zinc-300 mb-2 block">← Dashboard</button>
         <div className="flex items-start justify-between gap-4">
           <div>
             <h1 className="text-xl font-semibold text-zinc-100">{site.siteName}</h1>

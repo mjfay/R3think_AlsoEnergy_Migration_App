@@ -8,6 +8,7 @@ from typing import Any
 import httpx
 
 from app.config import settings
+from app.session import UserSession
 
 
 class AuthError(Exception):
@@ -15,10 +16,11 @@ class AuthError(Exception):
 
 
 class AlsoEnergyClient:
+    """Stateless HTTP client — all auth state (token, credentials) lives on the
+    UserSession passed into every call, never on this object, so one tenant's
+    session can never read or refresh another tenant's token."""
+
     def __init__(self) -> None:
-        self._access_token: str | None = None
-        self._refresh_token: str | None = None
-        self._expires_at: float = 0.0
         self._http = httpx.AsyncClient(
             base_url=settings.alsoenergy_base_url,
             timeout=30.0,
@@ -28,14 +30,8 @@ class AlsoEnergyClient:
     # Auth
     # ------------------------------------------------------------------
 
-    async def authenticate(self) -> None:
-        """Authenticate using keyring credentials (packaged) or .env (dev)."""
-        username, password = self._resolve_credentials()
-        if not username or not password:
-            raise AuthError("No credentials configured. Please complete onboarding.")
-        await self._authenticate_with(username, password)
-
-    async def _authenticate_with(self, username: str, password: str) -> None:
+    async def authenticate_with(self, username: str, password: str) -> tuple[str, float]:
+        """Authenticate with explicit credentials. Returns (access_token, expires_at_monotonic)."""
         data = {
             "grant_type": "password",
             "username": username,
@@ -43,71 +39,41 @@ class AlsoEnergyClient:
         }
         resp = await self._http.post("/Auth/token", data=data)
         resp.raise_for_status()
-        self._store_tokens(resp.json())
-
-    @staticmethod
-    def _resolve_credentials() -> tuple[str, str]:
-        """Return (username, password) from keyring first, .env fallback."""
-        import sys
-        if getattr(sys, "frozen", False):
-            from app.credentials import load
-            return load()
-        # Dev mode: use .env via settings
-        return (settings.alsoenergy_username, settings.alsoenergy_password)
-
-    async def refresh(self) -> None:
-        # API tokens are short-lived (15 min rolling); just re-auth with password.
-        await self.authenticate()
-
-    def _store_tokens(self, payload: dict) -> None:
-        self._access_token = payload["access_token"]
-        self._refresh_token = payload.get("refresh_token")
-        # API doesn't return expires_in; decode exp from the JWT directly.
-        self._expires_at = self._jwt_exp(payload["access_token"])
+        payload = resp.json()
+        access_token = payload["access_token"]
+        return access_token, self._jwt_exp(access_token)
 
     @staticmethod
     def _jwt_exp(token: str) -> float:
         """Extract exp claim from a JWT without verifying the signature."""
         try:
             part = token.split(".")[1]
-            # Add padding so base64 doesn't choke
             part += "=" * (-len(part) % 4)
             claims = _json.loads(base64.urlsafe_b64decode(part))
             exp_unix = claims["exp"]
-            # Convert absolute unix timestamp → monotonic equivalent
             return time.monotonic() + (exp_unix - time.time())
         except Exception:
-            # Fallback: assume 15 minutes
             return time.monotonic() + 900
 
-    def _token_needs_refresh(self) -> bool:
-        return time.monotonic() >= self._expires_at - 60
-
-    async def _ensure_token(self) -> None:
-        if self._access_token is None:
-            await self.authenticate()
-        elif self._token_needs_refresh():
-            await self.refresh()
-
-    @property
-    def token_status(self) -> dict:
-        if self._access_token is None:
-            return {"status": "not_authenticated"}
-        if self._token_needs_refresh():
-            return {"status": "expired"}
-        remaining = int(self._expires_at - time.monotonic())
-        return {"status": "valid", "expires_in_seconds": remaining}
+    async def _ensure_token(self, user: UserSession) -> None:
+        if not user.has_credentials():
+            raise AuthError("No credentials configured for this session. Please complete onboarding.")
+        needs_refresh = user.access_token is None or time.monotonic() >= user.token_expires_at - 60
+        if needs_refresh:
+            token, expires_at = await self.authenticate_with(user.username, user.password)
+            user.access_token = token
+            user.token_expires_at = expires_at
 
     # ------------------------------------------------------------------
     # HTTP helpers
     # ------------------------------------------------------------------
 
-    async def _request(self, method: str, path: str, **kwargs) -> Any:
-        await self._ensure_token()
+    async def _request(self, user: UserSession, method: str, path: str, **kwargs) -> Any:
+        await self._ensure_token(user)
 
         last_exc: Exception | None = None
         for attempt in range(5):  # 0..4 → 4 retries after first attempt
-            headers = {"Authorization": f"Bearer {self._access_token}"}
+            headers = {"Authorization": f"Bearer {user.access_token}"}
             try:
                 resp = await self._http.request(method, path, headers=headers, **kwargs)
             except httpx.TransportError as exc:
@@ -116,8 +82,10 @@ class AlsoEnergyClient:
                 continue
 
             if resp.status_code == 401:
-                await self.refresh()
-                headers = {"Authorization": f"Bearer {self._access_token}"}
+                token, expires_at = await self.authenticate_with(user.username, user.password)
+                user.access_token = token
+                user.token_expires_at = expires_at
+                headers = {"Authorization": f"Bearer {user.access_token}"}
                 resp = await self._http.request(method, path, headers=headers, **kwargs)
                 if resp.status_code == 401:
                     raise AuthError("Authentication failed after token refresh")
@@ -140,15 +108,15 @@ class AlsoEnergyClient:
         await asyncio.sleep(delay)
 
     # ------------------------------------------------------------------
-    # API methods
+    # API methods — every call is scoped to the caller's UserSession
     # ------------------------------------------------------------------
 
-    async def get_sites(self) -> list[dict]:
+    async def get_sites(self, user: UserSession) -> list[dict]:
         """Fetch all sites, handling paginated { items, totalCount } responses."""
         page, size = 1, 100
         results: list[dict] = []
         while True:
-            resp = await self._request("GET", "/Sites", params={"page": page, "pageSize": size})
+            resp = await self._request(user, "GET", "/Sites", params={"page": page, "pageSize": size})
             if isinstance(resp, list):
                 return resp
             items = resp.get("items", [])
@@ -159,11 +127,12 @@ class AlsoEnergyClient:
             page += 1
         return results
 
-    async def get_site(self, site_id: int | str) -> dict:
-        return await self._request("GET", f"/Sites/{site_id}")
+    async def get_site(self, user: UserSession, site_id: int | str) -> dict:
+        return await self._request(user, "GET", f"/Sites/{site_id}")
 
     async def get_site_hardware(
         self,
+        user: UserSession,
         site_id: int | str,
         include_archived_fields: bool = True,
         include_device_config: bool = True,
@@ -179,13 +148,14 @@ class AlsoEnergyClient:
         }
         if include_disabled:
             params["includeDisabledHardware"] = "true"
-        return await self._request("GET", f"/Sites/{site_id}/Hardware", params=params)
+        return await self._request(user, "GET", f"/Sites/{site_id}/Hardware", params=params)
 
-    async def get_hardware(self, hardware_id: int | str) -> dict:
-        return await self._request("GET", f"/Hardware/{hardware_id}")
+    async def get_hardware(self, user: UserSession, hardware_id: int | str) -> dict:
+        return await self._request(user, "GET", f"/Hardware/{hardware_id}")
 
-    async def get_gateway_devices_config(self, gateway_id: str) -> dict:
+    async def get_gateway_devices_config(self, user: UserSession, gateway_id: str) -> dict:
         return await self._request(
+            user,
             "GET",
             f"/Gateways/{gateway_id}/Devices/Config",
             params={"withGatewayCommands": "true"},
@@ -195,5 +165,5 @@ class AlsoEnergyClient:
         await self._http.aclose()
 
 
-# Singleton used throughout the app lifecycle
+# Singleton — safe to share because it holds no per-tenant state (see class docstring).
 client = AlsoEnergyClient()

@@ -174,20 +174,21 @@ _DATA_DEVICE_CODES = {"DA", "CE", "RD", "GW"}
 
 def generate_csv(
     session: Session,
+    session_id: str,
     site_ids: list[int],
     job_name: str = "export",
     include_virtual: bool = True,
     include_data_devices: bool = True,
 ) -> str:
     """
-    Generate the 31-column CSV for the given site IDs.
+    Generate the 31-column CSV for the given site IDs, scoped to one tenant's cached data.
     Returns the CSV as a UTF-8 string (with BOM for Excel compatibility).
     """
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     # Preload gateways keyed by gateway_id
     gateway_map: dict[str, Gateway] = {}
-    for gw in session.exec(select(Gateway)).all():
+    for gw in session.exec(select(Gateway).where(Gateway.session_id == session_id)).all():
         gateway_map[gw.gateway_id] = gw
 
     buf = io.StringIO()
@@ -197,11 +198,11 @@ def generate_csv(
     writer.writeheader()
 
     for site_id in site_ids:
-        site = session.get(Site, site_id)
+        site = session.get(Site, (session_id, site_id))
         if not site:
             continue
         devices = session.exec(
-            select(Hardware).where(Hardware.site_id == site_id)
+            select(Hardware).where(Hardware.session_id == session_id, Hardware.site_id == site_id)
         ).all()
 
         for hw in devices:

@@ -151,7 +151,10 @@ function Toggle({ checked, onToggle }) {
       onClick={onToggle}
       className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${checked ? 'bg-blue-600' : 'bg-zinc-600'}`}
     >
-      <span className={`inline-block h-4 w-4 rounded-full bg-white transform transition-transform ${checked ? 'translate-x-6' : 'translate-x-1'}`} />
+      <span
+        className="inline-block h-4 w-4 rounded-full bg-white transition-transform"
+        style={{ transform: checked ? 'translateX(1.5rem)' : 'translateX(0.25rem)' }}
+      />
     </button>
   )
 }
@@ -191,7 +194,7 @@ function ConfirmStep({ name, selectedIds, includeVirtual, onToggleVirtual, inclu
       </div>
 
       <div className="rounded-lg border border-amber-700/50 bg-amber-900/10 p-4 text-sm text-amber-300">
-        This will pull hardware data for all {selectedIds.size} selected sites from AlsoEnergy and generate a CSV. This may take a few minutes.
+        This will pull hardware data for all {selectedIds.size} selected sites from your API and generate a CSV. This may take a few minutes.
       </div>
 
       <div className="flex gap-3">
@@ -210,7 +213,7 @@ function ConfirmStep({ name, selectedIds, includeVirtual, onToggleVirtual, inclu
   )
 }
 
-export function NewMigrationJob() {
+export function ExportWizard() {
   const navigate = useNavigate()
   const [step, setStep] = useState(0)
   const [name, setName] = useState('')
@@ -239,7 +242,7 @@ export function NewMigrationJob() {
         include_virtual: includeVirtual,
         include_data_devices: includeDataDevices,
       })
-      navigate(`/migrations/${job.id}`)
+      navigate(`/export/${job.id}`)
     } catch (e) {
       alert(`Failed to create job: ${e.message}`)
       setCreating(false)
@@ -249,10 +252,11 @@ export function NewMigrationJob() {
   return (
     <div className="p-6 max-w-2xl mx-auto">
       <div className="mb-6">
-        <button onClick={() => navigate('/migrations')} className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors">
-          ← Back to exports
+        <button onClick={() => navigate('/')} className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors">
+          ← Back to dashboard
         </button>
       </div>
+      <h1 className="text-xl font-semibold text-zinc-100 mb-6">Export Wizard</h1>
       <Steps current={step} />
       <div className="border border-zinc-700 rounded-xl bg-zinc-900 p-8">
         {step === 0 && (

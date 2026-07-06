@@ -10,7 +10,9 @@ function base() {
 }
 
 async function req(path, options = {}) {
-  const res = await fetch(`${base()}${path}`, options)
+  // credentials:'include' ships the session cookie even when the frontend is served
+  // cross-origin from the backend (Tauri webview, Vite dev server without the proxy).
+  const res = await fetch(`${base()}${path}`, { credentials: 'include', ...options })
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
   return res.json()
 }

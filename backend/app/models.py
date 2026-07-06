@@ -17,6 +17,8 @@ JOB_STATUS_EMAILED = "emailed"
 class Site(SQLModel, table=True):
     __tablename__ = "sites"
 
+    # session_id scopes every row to one browser session (tenant) — see app/session.py.
+    session_id: str = Field(primary_key=True, index=True, default="")
     site_id: int = Field(primary_key=True)
     site_name: str = ""
     customer_id: Optional[int] = None
@@ -38,8 +40,9 @@ class Site(SQLModel, table=True):
 class Hardware(SQLModel, table=True):
     __tablename__ = "hardware"
 
+    session_id: str = Field(primary_key=True, index=True, default="")
     id: int = Field(primary_key=True)
-    site_id: int = Field(foreign_key="sites.site_id", index=True)
+    site_id: int = Field(index=True)
     name: str = ""
     string_id: Optional[str] = None
     function_code: Optional[str] = None
@@ -86,9 +89,10 @@ class Hardware(SQLModel, table=True):
 class Gateway(SQLModel, table=True):
     __tablename__ = "gateways"
 
+    session_id: str = Field(primary_key=True, index=True, default="")
     gateway_id: str = Field(primary_key=True)
-    site_id: int = Field(foreign_key="sites.site_id", index=True)
-    hardware_id: Optional[int] = Field(default=None, foreign_key="hardware.id")
+    site_id: int = Field(index=True)
+    hardware_id: Optional[int] = None
     name: str = ""
     parameters_json: str = "[]"
     device_configs_json: str = "{}"
@@ -105,6 +109,7 @@ class MigrationJob(SQLModel, table=True):
     __tablename__ = "migration_jobs"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    session_id: str = Field(index=True, default="")
     name: str = ""
     status: str = JOB_STATUS_PENDING  # pending/running/done/error/cancelled/emailed
     # JSON array of site IDs selected for this job
@@ -134,6 +139,7 @@ class MigrationJob(SQLModel, table=True):
 class DiscoveryResult(SQLModel, table=True):
     __tablename__ = "discovery_results"
 
+    session_id: str = Field(primary_key=True, index=True, default="")
     site_id: int = Field(primary_key=True)
     site_name: str = ""
     tcp_count: int = 0

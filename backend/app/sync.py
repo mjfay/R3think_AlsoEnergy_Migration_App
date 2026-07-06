@@ -1,17 +1,41 @@
 """Helpers that pull from the API and upsert into SQLite."""
 import asyncio
 import json
+import socket
+import struct
 from datetime import datetime, timezone
 
 from sqlmodel import Session, select
 
 from app.alsoenergy import client as ae
 from app.models import Gateway, Hardware, Site
+from app.session import UserSession
 from app.timezones import resolve_iana
 
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _normalize_ip(value) -> str | None:
+    """Return a dotted-decimal IP string, or None for blank/zero values.
+
+    AlsoEnergy sometimes returns the IP as a 32-bit integer (e.g. 3232235777)
+    instead of a dotted-decimal string ("192.168.1.1").
+    """
+    if value in (None, "", "0", 0):
+        return None
+    # Already dotted-decimal (contains a dot)
+    if isinstance(value, str) and "." in value:
+        return value
+    # Integer or integer-looking string — convert via network byte order
+    try:
+        int_val = int(value)
+    except (ValueError, TypeError):
+        return str(value)  # unexpected format; pass through
+    if int_val == 0:
+        return None
+    return socket.inet_ntoa(struct.pack(">I", int_val))
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +105,7 @@ def _enrich_hardware(hw: Hardware, detail: dict) -> Hardware:
     flags_raw = detail.get("flags") or []
     flags = flags_raw if isinstance(flags_raw, list) else [f for f, v in flags_raw.items() if v is True]
 
-    ip_addr = detail.get("address")  # string IP or "0"
+    ip_addr = detail.get("address")  # string IP, integer IP, or "0"
     port_mode = detail.get("portMode") or detail.get("portMode")
 
     # Virtual: address "0" or 0, portMode Unknown, and not a gateway
@@ -96,8 +120,9 @@ def _enrich_hardware(hw: Hardware, detail: dict) -> Hardware:
 
     driver_settings = driver.get("settings") or {}
     has_tcp_port = bool(driver_settings.get("TCPPort"))
-    hw.ip_address = (ip_addr if ip_addr not in (None, "0", "") else None) if has_tcp_port else None
-    hw.port = detail.get("port")
+    hw.ip_address = _normalize_ip(ip_addr) if has_tcp_port else None
+    raw_port = detail.get("port")
+    hw.port = raw_port if raw_port else None
     hw.port_mode = port_mode
     hw.gateway_id = detail.get("gatewayId")
     hw.driver_name = driver.get("name")
@@ -137,10 +162,11 @@ def _parse_gateway(gateway_id: str, site_id: int, hw_id: int | None, name: str, 
 # Upsert helpers
 # ---------------------------------------------------------------------------
 
-def upsert_site(session: Session, site: Site) -> None:
-    existing = session.get(Site, site.site_id)
+def upsert_site(session: Session, session_id: str, site: Site) -> None:
+    site.session_id = session_id
+    existing = session.get(Site, (session_id, site.site_id))
     if existing:
-        for k, v in site.model_dump(exclude={"site_id"}).items():
+        for k, v in site.model_dump(exclude={"site_id", "session_id"}).items():
             setattr(existing, k, v)
         session.add(existing)
     else:
@@ -148,10 +174,11 @@ def upsert_site(session: Session, site: Site) -> None:
     session.commit()
 
 
-def upsert_hardware(session: Session, hw: Hardware) -> None:
-    existing = session.get(Hardware, hw.id)
+def upsert_hardware(session: Session, session_id: str, hw: Hardware) -> None:
+    hw.session_id = session_id
+    existing = session.get(Hardware, (session_id, hw.id))
     if existing:
-        for k, v in hw.model_dump(exclude={"id"}).items():
+        for k, v in hw.model_dump(exclude={"id", "session_id"}).items():
             setattr(existing, k, v)
         session.add(existing)
     else:
@@ -159,10 +186,11 @@ def upsert_hardware(session: Session, hw: Hardware) -> None:
     session.commit()
 
 
-def upsert_gateway(session: Session, gw: Gateway) -> None:
-    existing = session.get(Gateway, gw.gateway_id)
+def upsert_gateway(session: Session, session_id: str, gw: Gateway) -> None:
+    gw.session_id = session_id
+    existing = session.get(Gateway, (session_id, gw.gateway_id))
     if existing:
-        for k, v in gw.model_dump(exclude={"gateway_id"}).items():
+        for k, v in gw.model_dump(exclude={"gateway_id", "session_id"}).items():
             setattr(existing, k, v)
         session.add(existing)
     else:
@@ -174,14 +202,14 @@ def upsert_gateway(session: Session, gw: Gateway) -> None:
 # Sync operations
 # ---------------------------------------------------------------------------
 
-async def sync_all_sites(session: Session) -> int:
-    sites_raw = await ae.get_sites()
+async def sync_all_sites(session: Session, user: UserSession) -> int:
+    sites_raw = await ae.get_sites(user)
     for raw in sites_raw:
-        upsert_site(session, _parse_site(raw))
+        upsert_site(session, user.session_id, _parse_site(raw))
     return len(sites_raw)
 
 
-async def sync_site_hardware(session: Session, site_id: int, progress_cb=None) -> int:
+async def sync_site_hardware(session: Session, user: UserSession, site_id: int, progress_cb=None) -> int:
     """
     Full sync for one site:
     1. Pull site detail
@@ -190,16 +218,17 @@ async def sync_site_hardware(session: Session, site_id: int, progress_cb=None) -
     4. Pull gateway configs for all unique gatewayIds
     """
     sem = asyncio.Semaphore(5)
+    sid = user.session_id
 
     # 1. Site detail
     try:
-        site_raw = await ae.get_site(site_id)
-        upsert_site(session, _parse_site(site_raw))
+        site_raw = await ae.get_site(user, site_id)
+        upsert_site(session, sid, _parse_site(site_raw))
     except Exception:
         pass
 
     # 2. Hardware list
-    hw_resp = await ae.get_site_hardware(site_id)
+    hw_resp = await ae.get_site_hardware(user, site_id)
     if isinstance(hw_resp, list):
         items = hw_resp
     else:
@@ -209,7 +238,7 @@ async def sync_site_hardware(session: Session, site_id: int, progress_cb=None) -
     hw_rows: dict[int, Hardware] = {}
     for raw in items:
         hw = _parse_hardware_list_item(site_id, raw)
-        upsert_hardware(session, hw)
+        upsert_hardware(session, sid, hw)
         hw_rows[hw.id] = hw
 
     if progress_cb:
@@ -219,8 +248,8 @@ async def sync_site_hardware(session: Session, site_id: int, progress_cb=None) -
     async def _enrich_one(hw_id: int, idx: int):
         async with sem:
             try:
-                detail = await ae.get_hardware(hw_id)
-                hw = session.get(Hardware, hw_id)
+                detail = await ae.get_hardware(user, hw_id)
+                hw = session.get(Hardware, (sid, hw_id))
                 if hw:
                     _enrich_hardware(hw, detail)
                     session.add(hw)
@@ -235,7 +264,7 @@ async def sync_site_hardware(session: Session, site_id: int, progress_cb=None) -
     # 4. Gateway configs — collect unique gatewayIds from now-enriched rows
     gateway_ids: dict[str, tuple[int | None, str]] = {}  # gateway_id → (hw_id, name)
     for hw_id in hw_rows:
-        hw = session.get(Hardware, hw_id)
+        hw = session.get(Hardware, (sid, hw_id))
         if hw and hw.gateway_id:
             if hw.gateway_id not in gateway_ids:
                 # Gateway hardware is typically functionCode GW
@@ -254,9 +283,9 @@ async def sync_site_hardware(session: Session, site_id: int, progress_cb=None) -
     async def _sync_gateway(gw_id: str, gw_hw_id: int | None, gw_name: str):
         async with sem:
             try:
-                cfg = await ae.get_gateway_devices_config(gw_id)
+                cfg = await ae.get_gateway_devices_config(user, gw_id)
                 gw = _parse_gateway(gw_id, site_id, gw_hw_id, gw_name, cfg)
-                upsert_gateway(session, gw)
+                upsert_gateway(session, sid, gw)
             except Exception:
                 pass
 
@@ -270,12 +299,13 @@ async def sync_site_hardware(session: Session, site_id: int, progress_cb=None) -
 
 async def sync_all(
     session: Session,
+    user: UserSession,
     progress_cb=None,
     limit: int | None = None,
     site_ids: list[int] | None = None,
 ):
     """Sync sites + hardware. Pass site_ids to sync specific sites; limit to cap count."""
-    sites_raw = await ae.get_sites()
+    sites_raw = await ae.get_sites(user)
     if site_ids:
         id_set = set(site_ids)
         sites_raw = [s for s in sites_raw if s.get("siteId") in id_set]
@@ -284,7 +314,7 @@ async def sync_all(
     total = len(sites_raw)
 
     for raw in sites_raw:
-        upsert_site(session, _parse_site(raw))
+        upsert_site(session, user.session_id, _parse_site(raw))
 
     if progress_cb:
         await progress_cb({"type": "sites_loaded", "total": total})
@@ -299,7 +329,7 @@ async def sync_all(
                 await progress_cb({"type": "site_start", "index": i + 1, "total": total,
                                    "siteId": site_id, "siteName": site_name})
             try:
-                count = await sync_site_hardware(session, site_id)
+                count = await sync_site_hardware(session, user, site_id)
                 if progress_cb:
                     await progress_cb({"type": "site_done", "index": i + 1, "total": total,
                                        "siteId": site_id, "siteName": site_name, "deviceCount": count})

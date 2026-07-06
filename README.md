@@ -1,8 +1,17 @@
-# AlsoEnergy → N3uron Migration Tool
+# Asset Owner Export Tool
 
-Pulls site and device configuration from the AlsoEnergy PowerTrack API and presents it for review before designing the N3uron mapping layer.
+Pulls site and device configuration from your API and exports it to CSV.
 
-## Setup
+## Quick start (no installation required)
+
+**Mac / Linux:** double-click `run.sh`, or open a terminal and run `./run.sh`.  
+**Windows:** double-click `run.bat`.
+
+The first time you run it, the script silently installs its own dependencies into a private folder — this takes about a minute and only happens once. After that, it starts the app and opens it automatically in your default browser. You don't need to install anything, open a terminal, or know anything about Python. To stop the app, close the terminal window that appeared when you launched it (Mac/Linux) or press any key in the console window (Windows).
+
+---
+
+## Developer setup
 
 ### Backend
 
@@ -13,7 +22,8 @@ source .venv/bin/activate
 pip install -e .
 
 cp .env.example .env
-# Edit .env — add ALSOENERGY_USERNAME and ALSOENERGY_PASSWORD
+# No credentials go in .env — each user enters their own API login in the
+# browser, held in-memory for their session only.
 ```
 
 ### Frontend

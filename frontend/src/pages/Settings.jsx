@@ -47,7 +47,7 @@ export function Settings() {
   const username = health?.token?.status === 'valid'
     ? '(authenticated)'
     : credStatus?.stored
-    ? '(stored in keychain)'
+    ? '(held in this session)'
     : 'Not configured'
 
   const dataDir = dirInfo?.dataDir || '(loading…)'
@@ -93,8 +93,10 @@ export function Settings() {
       {/* Account */}
       <Section title="Account">
         <Row
-          label="AlsoEnergy account"
-          description={credStatus?.stored ? 'Credentials saved in OS keychain' : 'No credentials stored'}
+          label="API account"
+          description={credStatus?.stored
+            ? 'Held in server memory for this browser session only — never written to disk'
+            : 'No credentials stored'}
         >
           <div className="flex items-center gap-3">
             <span className={`text-xs px-2 py-0.5 rounded font-medium ${

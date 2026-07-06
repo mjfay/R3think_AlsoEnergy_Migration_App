@@ -5,6 +5,8 @@ backend/dist/
 backend/build/
 backend/*.egg-info/
 **/__pycache__/
+**/.pytest_cache/
+**/.venv/
 *.pyc
 *.pyo
 
@@ -25,3 +27,9 @@ deliverables/
 .DS_Store
 **/.DS_Store
 backend/exports/
+
+# Secrets — never commit real credentials
+.env
+**/.env
+!.env.example
+!**/.env.example

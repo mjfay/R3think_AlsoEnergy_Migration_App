@@ -16,7 +16,7 @@ export function SyncProgressDrawer({ open, onClose, onDone, limit = 0, syncUrl =
     const url = syncUrl || (limit > 0
       ? `${getBase()}/sync/all?limit=${limit}`
       : `${getBase()}/sync/all`)
-    const es = new EventSource(url)
+    const es = new EventSource(url, { withCredentials: true })
     es.onmessage = (e) => {
       const ev = JSON.parse(e.data)
       setEvents(prev => [...prev, ev])
@@ -52,7 +52,7 @@ export function SyncProgressDrawer({ open, onClose, onDone, limit = 0, syncUrl =
       <div className="absolute inset-0 bg-black/50" onClick={done ? onClose : undefined} />
       <div className="relative w-full max-w-lg bg-zinc-900 border-l border-zinc-700 flex flex-col h-full shadow-2xl">
         <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-700">
-          <span className="font-semibold text-zinc-100">Sync All Sites</span>
+          <span className="font-semibold text-zinc-100">Sync Sites</span>
           {done && (
             <button onClick={onClose} className="text-zinc-400 hover:text-zinc-200 text-xl leading-none">×</button>
           )}

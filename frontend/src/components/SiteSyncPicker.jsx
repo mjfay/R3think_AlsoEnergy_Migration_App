@@ -3,14 +3,14 @@ import { useQuery } from '@tanstack/react-query'
 import { api, getBase } from '../lib/api'
 
 /**
- * Modal that lets users pick specific AlsoEnergy sites to sync.
- * Fetches the live site list from AlsoEnergy (not the local cache).
+ * Modal that lets users pick specific sites to sync.
+ * Fetches the live site list from the API (not the local cache).
  */
 export function SiteSyncPicker({ open, onClose, onStartSync }) {
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState(new Set())
 
-  // Live site list from AlsoEnergy (not cached DB)
+  // Live site list from the API (not cached DB)
   const { data: sites = [], isLoading, error } = useQuery({
     queryKey: ['ae-sites'],
     queryFn: () => api.get('/ae/sites'),
@@ -92,7 +92,7 @@ export function SiteSyncPicker({ open, onClose, onStartSync }) {
         <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-700">
           <div>
             <h2 className="text-base font-semibold text-zinc-100">Select Sites to Sync</h2>
-            <p className="text-xs text-zinc-500 mt-0.5">Choose which AlsoEnergy sites to pull hardware data from.</p>
+            <p className="text-xs text-zinc-500 mt-0.5">Choose which sites to pull hardware data from.</p>
           </div>
           <button onClick={onClose} className="text-zinc-500 hover:text-zinc-300 text-xl leading-none ml-4">×</button>
         </div>
@@ -134,7 +134,7 @@ export function SiteSyncPicker({ open, onClose, onStartSync }) {
           {isLoading && (
             <div className="flex items-center justify-center p-12 gap-3">
               <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-              <span className="text-sm text-zinc-400">Fetching site list from AlsoEnergy…</span>
+              <span className="text-sm text-zinc-400">Fetching sites from your API… This may take a moment.</span>
             </div>
           )}
 

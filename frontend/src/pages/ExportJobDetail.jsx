@@ -129,7 +129,7 @@ function CompletionView({ job, onDownload }) {
 
       <p className="text-sm text-zinc-400">
         Your CSV is ready. Download it below, or find it later in the{' '}
-        <a href="/migrations" className="text-blue-400 hover:text-blue-300">Exports</a> tab.
+        <a href="/" className="text-blue-400 hover:text-blue-300">Dashboard</a>'s Exports section.
       </p>
       <div className="flex flex-wrap gap-3 items-center">
         <button
@@ -143,7 +143,7 @@ function CompletionView({ job, onDownload }) {
   )
 }
 
-export function MigrationJobDetail() {
+export function ExportJobDetail() {
   const { jobId } = useParams()
   const navigate = useNavigate()
   const qc = useQueryClient()
@@ -184,13 +184,13 @@ export function MigrationJobDetail() {
         })
         if (!dest) { setToast(null); return }
         showToast({ status: 'pending', title: `Downloading ${dest.split('/').pop()}…`, subtitle: dest }, 0)
-        const res = await fetch(`${getBase()}/jobs/${job.id}/csv`)
+        const res = await fetch(`${getBase()}/jobs/${job.id}/csv`, { credentials: 'include' })
         if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
         const text = await res.text()
         await writeTextFile(dest, text)
         savedPath = dest
       } else {
-        const res = await fetch(`${getBase()}/jobs/${job.id}/csv`)
+        const res = await fetch(`${getBase()}/jobs/${job.id}/csv`, { credentials: 'include' })
         if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
         const blob = await res.blob()
         const url = URL.createObjectURL(blob)
@@ -222,7 +222,7 @@ export function MigrationJobDetail() {
     setStreaming(true)
     setSitesProcessed(0)
 
-    const es = new EventSource(`${getBase()}/jobs/${jobId}/events`)
+    const es = new EventSource(`${getBase()}/jobs/${jobId}/events`, { withCredentials: true })
     esRef.current = es
 
     es.onmessage = (e) => {
@@ -313,8 +313,8 @@ export function MigrationJobDetail() {
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>
-          <Link to="/migrations" className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors">
-            ← Exports
+          <Link to="/" className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors">
+            ← Dashboard
           </Link>
           <h1 className="text-xl font-semibold text-zinc-100 mt-2">{job.name}</h1>
           <div className="flex items-center gap-3 mt-1">

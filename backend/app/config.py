@@ -7,17 +7,19 @@ def _is_packaged() -> bool:
 
 
 class Settings(BaseSettings):
-    # .env is used in dev only; the packaged app loads credentials from keyring
+    # Packaged builds never load a bundled .env — no credentials belong in one;
+    # every user's AlsoEnergy login lives only in their own browser session (see app/session.py).
     model_config = SettingsConfigDict(
         env_file=".env" if not _is_packaged() else None,
         env_file_encoding="utf-8",
     )
 
     alsoenergy_base_url: str = "https://api.alsoenergy.com"
-    # Empty defaults — populated from keyring at runtime in packaged mode
-    alsoenergy_username: str = ""
-    alsoenergy_password: str = ""
     database_url: str = "sqlite:///./alsoenergy.db"
+
+    # Session cookie is HttpOnly always; Secure requires HTTPS to actually reach the
+    # browser — flip this on once the deployment sits behind TLS.
+    session_cookie_secure: bool = False
 
 
 settings = Settings()

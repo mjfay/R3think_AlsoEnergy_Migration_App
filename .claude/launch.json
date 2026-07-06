@@ -1,0 +1,29 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "r3-registry-ui",
+      "runtimeExecutable": "/Users/michaelfay/Documents/r3-registry/.venv/bin/python3",
+      "runtimeArgs": ["/Users/michaelfay/Documents/r3-registry/app.py"],
+      "port": 8000
+    },
+    {
+      "name": "meter-validator",
+      "runtimeExecutable": "/Users/michaelfay/Documents/meter-validator/backend/.venv/bin/python3",
+      "runtimeArgs": ["-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8010", "--app-dir", "/Users/michaelfay/Documents/meter-validator/backend"],
+      "port": 8010
+    },
+    {
+      "name": "alsoenergy-backend",
+      "runtimeExecutable": "/bin/bash",
+      "runtimeArgs": ["-lc", "cd /Users/michaelfay/Documents/R3think_AlsoEnergy_Migration_App/backend && .venv/bin/python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8000"],
+      "port": 8000
+    },
+    {
+      "name": "alsoenergy-frontend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--prefix", "/Users/michaelfay/Documents/R3think_AlsoEnergy_Migration_App/frontend"],
+      "port": 5173
+    }
+  ]
+}

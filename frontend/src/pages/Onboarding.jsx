@@ -36,7 +36,7 @@ function WelcomeStep({ onNext }) {
       <div>
         <h2 className="text-2xl font-bold text-zinc-100 mb-2">Asset Owner Export Tool</h2>
         <p className="text-zinc-400 leading-relaxed">
-          This tool connects to the AlsoEnergy PowerTrack API to export site and device
+          This tool connects to your API to export site and device
           configuration data for N3uron migration. Everything runs locally — no data leaves
           your machine.
         </p>
@@ -44,15 +44,16 @@ function WelcomeStep({ onNext }) {
       <div className="rounded-lg border border-zinc-700 bg-zinc-800/50 p-4 space-y-2">
         <p className="text-sm font-medium text-zinc-300">What you'll need</p>
         <ul className="text-sm text-zinc-400 space-y-1 list-disc list-inside">
-          <li>Your AlsoEnergy PowerTrack username</li>
-          <li>Your AlsoEnergy PowerTrack password</li>
+          <li>Your API username</li>
+          <li>Your API password</li>
         </ul>
       </div>
       <div className="rounded-lg border border-zinc-700 bg-zinc-800/50 p-4 space-y-2">
         <p className="text-sm font-medium text-zinc-300">Privacy</p>
         <p className="text-sm text-zinc-400">
-          Credentials are stored in your OS secure keychain (macOS Keychain / Windows Credential
-          Manager). They are never written to disk in plain text or sent anywhere.
+          Your credentials are held in server memory for this browser session only — never
+          written to disk, and never visible to anyone else using this tool. They're cleared
+          when you log out, close this session, or the server restarts.
         </p>
       </div>
       <button
@@ -71,7 +72,7 @@ function CredentialsStep({ username, password, onChange, onNext, onBack }) {
       <div>
         <h2 className="text-xl font-bold text-zinc-100 mb-1">Enter credentials</h2>
         <p className="text-zinc-400 text-sm">
-          Your AlsoEnergy PowerTrack login. We'll test them on the next step before saving.
+          Your API login. We'll test the connection automatically on the next step.
         </p>
       </div>
       <div className="space-y-4">
@@ -118,7 +119,7 @@ function CredentialsStep({ username, password, onChange, onNext, onBack }) {
 }
 
 function TestStep({ username, password, onNext, onBack }) {
-  const [status, setStatus] = useState('idle') // idle | testing | ok | fail
+  const [status, setStatus] = useState('testing') // testing | ok | fail
   const [error, setError] = useState('')
 
   async function runTest() {
@@ -138,26 +139,22 @@ function TestStep({ username, password, onNext, onBack }) {
     }
   }
 
+  // Auto-test on mount
+  useEffect(() => { runTest() }, [])
+
   return (
     <div className="flex flex-col gap-6">
       <div>
         <h2 className="text-xl font-bold text-zinc-100 mb-1">Test connection</h2>
         <p className="text-zinc-400 text-sm">
-          Verify your credentials against the AlsoEnergy API before saving.
+          Verifying your credentials against the API…
         </p>
       </div>
-
-      {status === 'idle' && (
-        <div className="rounded-lg border border-zinc-700 bg-zinc-800/50 p-4 text-sm text-zinc-400">
-          Click <span className="text-zinc-200 font-medium">Run test</span> to check your credentials.
-          Nothing will be saved yet.
-        </div>
-      )}
 
       {status === 'testing' && (
         <div className="rounded-lg border border-zinc-700 bg-zinc-800/50 p-4 flex items-center gap-3">
           <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-          <span className="text-sm text-zinc-300">Connecting to AlsoEnergy API…</span>
+          <span className="text-sm text-zinc-300">Connecting to API…</span>
         </div>
       )}
 
@@ -166,7 +163,7 @@ function TestStep({ username, password, onNext, onBack }) {
           <span className="text-emerald-400 text-lg">✓</span>
           <div>
             <p className="text-sm font-medium text-emerald-300">Connection successful</p>
-            <p className="text-xs text-emerald-500 mt-0.5">Ready to save credentials to your keychain.</p>
+            <p className="text-xs text-emerald-500 mt-0.5">Ready to attach credentials to this session.</p>
           </div>
         </div>
       )}
@@ -186,15 +183,15 @@ function TestStep({ username, password, onNext, onBack }) {
         >
           Back
         </button>
-        {status !== 'ok' ? (
+        {status === 'fail' && (
           <button
             onClick={runTest}
-            disabled={status === 'testing'}
-            className="px-5 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white rounded-lg font-medium transition-colors"
+            className="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium transition-colors"
           >
-            {status === 'testing' ? 'Testing…' : status === 'fail' ? 'Retry' : 'Run test'}
+            Retry
           </button>
-        ) : (
+        )}
+        {status === 'ok' && (
           <button
             onClick={onNext}
             className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-medium transition-colors"
@@ -231,14 +228,14 @@ function SaveStep({ username, password, onDone }) {
       <div>
         <h2 className="text-xl font-bold text-zinc-100 mb-1">Saving credentials</h2>
         <p className="text-zinc-400 text-sm">
-          Storing your credentials in the OS secure keychain.
+          Attaching your credentials to this browser session.
         </p>
       </div>
 
       {(status === 'idle' || status === 'saving') && (
         <div className="rounded-lg border border-zinc-700 bg-zinc-800/50 p-4 flex items-center gap-3">
           <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-          <span className="text-sm text-zinc-300">Saving to keychain…</span>
+          <span className="text-sm text-zinc-300">Saving to this session…</span>
         </div>
       )}
 
