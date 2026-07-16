@@ -59,6 +59,7 @@ class Hardware(SQLModel, table=True):
 
     # From full hardware detail (GET /Hardware/{id})
     ip_address: Optional[str] = None    # top-level address (IP string or "0")
+    address_source: Optional[str] = None  # how ip_address was resolved (confirmed / driver_settings.<key> / int_decoded_le_unconfirmed / None)
     port: Optional[int] = None          # top-level port
     port_mode: Optional[str] = None     # top-level portMode
     gateway_id: Optional[str] = Field(default=None, index=True)
@@ -123,6 +124,7 @@ class MigrationJob(SQLModel, table=True):
     virtual_skipped: int = 0
     registers_captured: int = 0
     error_count: int = 0
+    unresolved_count: int = 0  # non-virtual devices whose comms channel couldn't be resolved
     error_detail: Optional[str] = None
     created_at: Optional[datetime] = None
     started_at: Optional[datetime] = None

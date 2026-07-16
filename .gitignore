@@ -27,6 +27,8 @@ deliverables/
 .DS_Store
 **/.DS_Store
 backend/exports/
+standalone-export/exports/
+standalone-export/cache/
 
 # Secrets — never commit real credentials
 .env

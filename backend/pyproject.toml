@@ -23,3 +23,6 @@ dev = ["ruff", "pytest", "pytest-asyncio", "httpx"]
 
 [tool.setuptools.packages.find]
 include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -5,12 +5,20 @@ Follows the 31-column spec from the migration addendum exactly.
 import csv
 import io
 import json
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from sqlmodel import Session, select
 
 from app.models import Gateway, Hardware, Site
 from app.timezones import resolve_iana
+
+
+@dataclass
+class ExportStats:
+    """Diagnostics accumulated while generating a CSV, surfaced separately
+    from the 31-column deliverable (which stays spec-exact)."""
+    unresolved_by_driver: dict[str, int] = field(default_factory=dict)
 
 TOOL_VERSION = "0.1.0"
 
@@ -57,9 +65,13 @@ def _bool(v) -> str:
 def _channel_mode(hw: Hardware) -> str:
     """Classify channel as TCP/RTU/UNKNOWN.
 
-    AlsoEnergy never sets comType="Tcp"; TCP devices have driver.settings.TCPPort populated.
+    A validated ip_address wins even when comType also reads as a serial type —
+    confirmed in the wild across many devices (Nexus meters, ABB inverter
+    modules sharing one gateway IP with per-module unit IDs, etc.) where
+    comType is a stale/generic label but the device is genuinely polled over
+    TCP. Only fall back to comType-based RTU when there's no resolved address.
     """
-    if hw.tcp_port:
+    if hw.ip_address:
         return "TCP"
     if hw.com_type in ("Rs485_2Wire", "Rs485_4Wire", "Rs232", "Rs485"):
         return "RTU"
@@ -179,6 +191,7 @@ def generate_csv(
     job_name: str = "export",
     include_virtual: bool = True,
     include_data_devices: bool = True,
+    stats: ExportStats | None = None,
 ) -> str:
     """
     Generate the 31-column CSV for the given site IDs, scoped to one tenant's cached data.
@@ -211,7 +224,11 @@ def generate_csv(
             if not include_data_devices and hw.function_code in _DATA_DEVICE_CODES:
                 continue
             gateway = gateway_map.get(hw.gateway_id) if hw.gateway_id else None
-            for row in _device_rows(job_name, site, hw, gateway, generated_at):
+            rows = _device_rows(job_name, site, hw, gateway, generated_at)
+            if stats is not None and rows and rows[0]["channel_mode"] == "UNKNOWN" and not hw.is_virtual_device:
+                key = hw.driver_name or "(unknown driver)"
+                stats.unresolved_by_driver[key] = stats.unresolved_by_driver.get(key, 0) + 1
+            for row in rows:
                 writer.writerow({k: _clean(v) for k, v in row.items()})
 
     return buf.getvalue()

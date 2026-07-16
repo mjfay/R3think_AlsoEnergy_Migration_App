@@ -1,6 +1,7 @@
 """Helpers that pull from the API and upsert into SQLite."""
 import asyncio
 import json
+import re
 import socket
 import struct
 from datetime import datetime, timezone
@@ -17,25 +18,83 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _normalize_ip(value) -> str | None:
-    """Return a dotted-decimal IP string, or None for blank/zero values.
+_IP_OCTET = r"(?:25[0-5]|2[0-4]\d|1?\d?\d)"
+_IP_RE = re.compile(rf"\b{_IP_OCTET}(?:\.{_IP_OCTET}){{3}}\b")
 
-    AlsoEnergy sometimes returns the IP as a 32-bit integer (e.g. 3232235777)
-    instead of a dotted-decimal string ("192.168.1.1").
-    """
-    if value in (None, "", "0", 0):
+
+def _looks_like_ip(s: str) -> bool:
+    """True if the entire string is a valid dotted-decimal IPv4 address."""
+    return bool(_IP_RE.fullmatch(s.strip()))
+
+
+def _extract_ip(text: str) -> str | None:
+    """Find the first valid dotted-decimal IPv4 substring inside an arbitrary
+    string (e.g. a URL like 'https://166.164.242.83:8080'). Returns None if
+    nothing octet-valid is found — never fabricates a match."""
+    if not isinstance(text, str):
         return None
-    # Already dotted-decimal (contains a dot)
-    if isinstance(value, str) and "." in value:
-        return value
-    # Integer or integer-looking string — convert via network byte order
+    m = _IP_RE.search(text)
+    return m.group(0) if m else None
+
+
+def _le_decode_candidate(int_val: int) -> str:
+    """Little-endian decode of a packed-int address, for diagnostics only —
+    never assigned to ip_address until confirmed across a broad live sample."""
+    return socket.inet_ntoa(struct.pack("<I", int_val & 0xFFFFFFFF))
+
+
+# Ordered list of driver.settings keys known to embed a usable address for
+# drivers that don't populate the top-level detail.address. Confirmed shapes
+# so far:
+#   - SMA WebBox/SCCom: real IP as a bare dotted string under "SerialNumber"
+#   - Axis Camera: real IP embedded in a URL under "accessURL"/"AccessURL"
+# Extend only once a real device has proven a new key — do not guess.
+# KEEP IN SYNC WITH standalone-export/export.py::_FALLBACK_ADDRESS_KEYS
+_FALLBACK_ADDRESS_KEYS = ["SerialNumber", "AccessURL", "accessURL"]
+
+
+def _find_fallback_address(driver_settings: dict) -> tuple[str | None, str | None]:
+    """Scan known driver.settings keys for an embedded IP. Returns
+    (ip, source_tag) or (None, None). Only ever returns a value that passed
+    IP-shape validation — never returns an unvalidated raw string.
+    KEEP IN SYNC WITH standalone-export/export.py::_find_fallback_address"""
+    for key in _FALLBACK_ADDRESS_KEYS:
+        val = driver_settings.get(key)
+        if not isinstance(val, str) or not val.strip():
+            continue
+        if _looks_like_ip(val):
+            return val.strip(), f"driver_settings.{key}"
+        candidate = _extract_ip(val)
+        if candidate:
+            return candidate, f"driver_settings.{key}"
+    return None, None
+
+
+def _normalize_ip(value) -> tuple[str | None, str | None]:
+    """Return (ip, source_tag) for a top-level detail.address value.
+
+    - blank/zero -> (None, None)
+    - dotted string -> (ip, "confirmed")
+    - non-blank string that ISN'T a valid dotted IP -> (None, None); never
+      guess at malformed/unexpected data
+    - integer / integer-looking -> (None, "int_decoded_le_unconfirmed"); the
+      little-endian-decoded value is available via _le_decode_candidate() for
+      diagnostics only, and is NOT assigned to ip_address (circumstantial
+      evidence only, not proven across a broad enough live sample).
+    KEEP IN SYNC WITH standalone-export/export.py::_normalize_address"""
+    if value in (None, "", "0", 0):
+        return None, None
+    if isinstance(value, str):
+        if _looks_like_ip(value):
+            return value, "confirmed"
+        return None, None
     try:
         int_val = int(value)
     except (ValueError, TypeError):
-        return str(value)  # unexpected format; pass through
+        return None, None
     if int_val == 0:
-        return None
-    return socket.inet_ntoa(struct.pack(">I", int_val))
+        return None, None
+    return None, "int_decoded_le_unconfirmed"
 
 
 # ---------------------------------------------------------------------------
@@ -119,8 +178,19 @@ def _enrich_hardware(hw: Hardware, detail: dict) -> Hardware:
     )
 
     driver_settings = driver.get("settings") or {}
-    has_tcp_port = bool(driver_settings.get("TCPPort"))
-    hw.ip_address = _normalize_ip(ip_addr) if has_tcp_port else None
+    # Trust the top-level detail address directly — driver.settings.TCPPort isn't
+    # populated by every driver (SMA WebBox, Axis Camera, etc. omit it even when
+    # the device has a real network address), so it can't gate whether we keep it.
+    # Validate the value actually looks like an IP rather than assigning it blind;
+    # if it doesn't resolve, fall back to known driver-settings keys (only when
+    # the device isn't already known-virtual).
+    ip, source = _normalize_ip(ip_addr)
+    if ip is None and not is_virtual:
+        fallback_ip, fallback_source = _find_fallback_address(driver_settings)
+        if fallback_ip is not None:
+            ip, source = fallback_ip, fallback_source
+    hw.ip_address = ip
+    hw.address_source = source
     raw_port = detail.get("port")
     hw.port = raw_port if raw_port else None
     hw.port_mode = port_mode

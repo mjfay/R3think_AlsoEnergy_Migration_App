@@ -16,7 +16,7 @@ from sqlmodel import Session, func, select
 
 from app.alsoenergy import AuthError, client as ae_client
 from app.config import settings
-from app.csv_export import TOOL_VERSION, generate_csv
+from app.csv_export import TOOL_VERSION, ExportStats, generate_csv
 from app.db import engine, get_session, init_db
 from app.models import (
     DiscoveryResult, Gateway, Hardware, MigrationJob, Site,
@@ -308,15 +308,20 @@ def export_csv_site(
     site = session.get(Site, (user.session_id, site_id))
     if not site:
         raise HTTPException(404, f"Site {site_id} not found in cache")
+    stats = ExportStats()
     csv_text = generate_csv(
-        session, user.session_id, [site_id], job_name=job_name, include_virtual=include_virtual
+        session, user.session_id, [site_id], job_name=job_name, include_virtual=include_virtual,
+        stats=stats,
     )
     safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in job_name)
     filename = f"{safe_name}_{datetime.utcnow().strftime('%Y-%m-%d')}.csv"
     return Response(
         content=csv_text.encode("utf-8-sig"),
         media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Unresolved-Count": str(sum(stats.unresolved_by_driver.values())),
+        },
     )
 
 
@@ -335,19 +340,24 @@ def export_csv_multi(
     """Download a 31-column CSV for multiple sites."""
     if not payload.site_ids:
         raise HTTPException(400, "site_ids must not be empty")
+    stats = ExportStats()
     csv_text = generate_csv(
         session,
         user.session_id,
         payload.site_ids,
         job_name=payload.job_name,
         include_virtual=payload.include_virtual,
+        stats=stats,
     )
     safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in payload.job_name)
     filename = f"{safe_name}_{datetime.utcnow().strftime('%Y-%m-%d')}.csv"
     return Response(
         content=csv_text.encode("utf-8-sig"),
         media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Unresolved-Count": str(sum(stats.unresolved_by_driver.values())),
+        },
     )
 
 
@@ -430,6 +440,7 @@ def _job_dict(job: MigrationJob) -> dict:
         "virtualSkipped": job.virtual_skipped,
         "registersCaptured": job.registers_captured,
         "errorCount": job.error_count,
+        "unresolvedCount": job.unresolved_count,
         "errorDetail": job.error_detail,
         "createdAt": job.created_at.isoformat() if job.created_at else None,
         "startedAt": job.started_at.isoformat() if job.started_at else None,
@@ -509,6 +520,7 @@ async def run_job(job_id: int, session: Session = Depends(get_session), user: Us
         job.virtual_skipped = 0
         job.registers_captured = 0
         job.error_count = 0
+        job.unresolved_count = 0
         job.error_detail = None
         session.add(job)
         session.commit()
@@ -566,11 +578,13 @@ async def run_job(job_id: int, session: Session = Depends(get_session), user: Us
                 ).one()
                 total_virtual += virt
 
+            stats = ExportStats()
             csv_text = generate_csv(
                 session, user.session_id, site_ids,
                 job_name=job.name,
                 include_virtual=job.include_virtual,
                 include_data_devices=job.include_data_devices,
+                stats=stats,
             )
 
             # Count registers from CSV (rows - 1 for header, minus BOM line)
@@ -594,6 +608,7 @@ async def run_job(job_id: int, session: Session = Depends(get_session), user: Us
             job.virtual_skipped = total_virtual if not job.include_virtual else 0
             job.registers_captured = max(rows, 0)
             job.error_count = error_count
+            job.unresolved_count = sum(stats.unresolved_by_driver.values())
             job.completed_at = datetime.now(timezone.utc)
             session.add(job)
             session.commit()
@@ -602,6 +617,8 @@ async def run_job(job_id: int, session: Session = Depends(get_session), user: Us
                 "type": "done",
                 "sitesSynced": sites_done,
                 "devicesFound": total_devices,
+                "unresolvedCount": job.unresolved_count,
+                "unresolvedByDriver": stats.unresolved_by_driver,
                 "virtualSkipped": job.virtual_skipped,
                 "registersCaptured": job.registers_captured,
                 "errorCount": error_count,

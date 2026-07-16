@@ -23,11 +23,13 @@ _HARDWARE_MIGRATIONS = [
     # Extracted from driver.settings for fast CSV access
     "ALTER TABLE hardware ADD COLUMN modbus_unit_id TEXT",
     "ALTER TABLE hardware ADD COLUMN tcp_port TEXT",
+    "ALTER TABLE hardware ADD COLUMN address_source TEXT",
 ]
 
 _JOB_MIGRATIONS = [
     "ALTER TABLE migration_jobs ADD COLUMN include_data_devices INTEGER NOT NULL DEFAULT 1",
     "ALTER TABLE migration_jobs ADD COLUMN session_id TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE migration_jobs ADD COLUMN unresolved_count INTEGER NOT NULL DEFAULT 0",
 ]
 
 # migration_jobs table is created by SQLModel.metadata.create_all; no ALTER needed
