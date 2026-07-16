@@ -25,9 +25,9 @@ def _detail(address="0", port_mode="Unknown", com_type="Unknown", port_number=0,
     }
 
 
-def _hw(id=1, function_code="PM", com_type="Unknown", port_number=0) -> Hardware:
+def _hw(id=1, function_code="PM", com_type="Unknown", port_number=0, baud_rate=0) -> Hardware:
     return Hardware(id=id, site_id=1, session_id="s", function_code=function_code,
-                     com_type=com_type, port_number=port_number)
+                     com_type=com_type, port_number=port_number, baud_rate=baud_rate)
 
 
 class TestConfirmedTopLevelAddress:
@@ -75,6 +75,33 @@ class TestExistingRtuUnaffected:
         assert hw.ip_address == "172.21.120.37"
         assert hw.address_source == "confirmed"
         assert _channel_mode(hw) == "TCP"
+
+    def test_comtype_unknown_but_real_serial_config_resolves_rtu(self):
+        """Real device: South Burlington Solar, 'Solectria 36kW TL V2 Inverter -
+        11'. AlsoEnergy's own UI shows Port=2/Baud=9600/Address=11 (it's
+        RS-485-chained off the site's Elkor meter), but config.comType is the
+        generic 'Unknown' label rather than an Rs485_* value — the same kind
+        of stale/missing comms-type label as the TCP case above, just on the
+        serial side. Confirmed 557 similar cases (mostly RS-485 string
+        inverters: Solectria, Chint, Huawei, SunGrow, Delta, SolarEdge) across
+        the wider production dataset before trusting this signal."""
+        hw = _hw(function_code="PV", com_type="Unknown", port_number=2, baud_rate=9600)
+        hw.address = "11"
+        _enrich_hardware(hw, _detail(driver_name="Solectria TL String Inverter"))
+        assert hw.ip_address is None
+        assert _channel_mode(hw) == "RTU"
+
+    def test_comtype_unknown_with_zero_baud_stays_unknown(self):
+        """Real device: University of Illinois 'Hukseflux Heater Controller'
+        (ADAM 4055). port_number=2 (nonzero) but baud_rate=0 — genuinely no
+        serial config, must NOT be swept up by the port+baud RTU rule above.
+        This is the exact discriminator that keeps that rule from creating
+        false positives (verified across the whole production cache: every
+        confirmed-unresolved GW/DA/WS device has baud_rate=0)."""
+        hw = _hw(id=44904, function_code="DA", com_type="Unknown", port_number=2, baud_rate=0)
+        _enrich_hardware(hw, _detail(driver_name="ADAM 4055"))
+        assert hw.ip_address is None
+        assert _channel_mode(hw) == "UNKNOWN"
 
 
 class TestVirtualDeviceUnaffected:

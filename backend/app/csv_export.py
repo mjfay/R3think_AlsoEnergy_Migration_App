@@ -70,10 +70,22 @@ def _channel_mode(hw: Hardware) -> str:
     modules sharing one gateway IP with per-module unit IDs, etc.) where
     comType is a stale/generic label but the device is genuinely polled over
     TCP. Only fall back to comType-based RTU when there's no resolved address.
+
+    comType can ALSO read "Unknown" for genuinely-serial devices — confirmed
+    on South Burlington Solar's "Solectria 36kW TL V2 Inverter - 11" (AlsoEnergy's
+    own UI shows Port=2/Baud=9600/Address=11, but config.comType="Unknown"), and
+    ~550 similar RS-485-chained string inverters across the cached dataset
+    (Solectria, Chint, Huawei, SunGrow, Delta, SolarEdge). In that case a real,
+    nonzero port_number + baud_rate pair is the signal to trust. Devices that
+    are genuinely unresolved (GW/DA/WS placeholders) reliably show baud_rate=0
+    even when port_number is nonzero, so requiring BOTH nonzero avoids false
+    positives — verified against production data before shipping this.
     """
     if hw.ip_address:
         return "TCP"
     if hw.com_type in ("Rs485_2Wire", "Rs485_4Wire", "Rs232", "Rs485"):
+        return "RTU"
+    if hw.port_number and hw.baud_rate:
         return "RTU"
     return "UNKNOWN"
 
