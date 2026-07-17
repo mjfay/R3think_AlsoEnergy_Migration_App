@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../lib/api'
 
-const TOOL_VERSION = '0.1.0'
+const TOOL_VERSION = '0.2.0'
 
 function Section({ title, children }) {
   return (

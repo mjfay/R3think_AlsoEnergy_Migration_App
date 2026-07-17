@@ -20,7 +20,7 @@ class ExportStats:
     from the 31-column deliverable (which stays spec-exact)."""
     unresolved_by_driver: dict[str, int] = field(default_factory=dict)
 
-TOOL_VERSION = "0.1.0"
+TOOL_VERSION = "0.2.0"
 
 # Column order matches the spec exactly
 COLUMNS = [

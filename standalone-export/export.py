@@ -42,7 +42,7 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-TOOL_VERSION = "0.1.0"
+TOOL_VERSION = "0.2.0"
 BASE_URL = os.environ.get("ALSOENERGY_BASE_URL", "https://api.alsoenergy.com")
 SCRIPT_DIR = Path(__file__).parent
 CACHE_PATH = SCRIPT_DIR / "cache" / "export.db"
